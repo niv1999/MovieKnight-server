@@ -2,7 +2,7 @@
 
 ## Links
 - Client repo: https://github.com/MatanShtar/MovieKnight
-- Server repo: `<fill once created>`
+- Server repo: https://github.com/niv1999/MovieKnight-server
 - Figma: https://www.figma.com/design/gYRNW93jiuFABiCGAxcuY1/MovieKnight
 - This is the canonical plan (the brain). Discord `#board` tracks live status.
 
