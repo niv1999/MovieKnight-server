@@ -2,6 +2,8 @@
 
 Express + MongoDB (Mongoose) REST API for **MovieKnight**. Pairs with the **client** repo (vanilla HTML/CSS/JS).
 
+> 🚀 **New here?** Full dev setup for both repos → **[docs/ONBOARDING.md](docs/ONBOARDING.md)**.
+
 ## Stack
 Node.js · Express · MongoDB Atlas (Mongoose) · JWT auth (`bcryptjs` + `jsonwebtoken`) · TMDB proxy. Deployed on Render.
 
