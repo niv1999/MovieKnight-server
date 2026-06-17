@@ -66,6 +66,8 @@ app.get("/", (req, res) => {
 // are forwarded straight through.
 const DISCOVER_PARAMS = [
   "with_genres", // comma-separated genre IDs, e.g. "28,12"
+  "with_cast", // person ID(s) to filter by cast (actor), e.g. "500"
+  "with_crew", // person ID(s) to filter by crew (director), e.g. "525"
   "with_watch_providers", // pipe-separated provider IDs, e.g. "8|9"
   "watch_region", // sent with with_watch_providers (US)
   "primary_release_date.gte", // YYYY-01-01
@@ -80,6 +82,11 @@ function clampPage(raw) {
   const n = Math.trunc(Number(raw));
   if (!Number.isFinite(n)) return 1;
   return Math.min(500, Math.max(1, n));
+}
+
+// Inclusive random integer in [min, max].
+function randInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 // 1. GET /movies — popular movies, or a filtered catalog when any discover param
@@ -117,7 +124,48 @@ app.get(
   })
 );
 
-// 2. GET /movies/search?query=<text> — search by title. Empty query -> empty list.
+// 2. GET /movies/random — one truly random (often obscure) movie.
+//    TMDB has no native random endpoint, so we brute-force it: pick a random ID,
+//    fetch /movie/{id}, and retry on a 404 (dead ID) or an adult title. To avoid
+//    hanging when we keep hitting dead/adult IDs, we cap attempts and fall back to
+//    a random title from the popular feed (pages 1–500).
+const RANDOM_MAX_ID = 1_200_000; // rough upper bound of TMDB movie IDs
+const RANDOM_MAX_ATTEMPTS = 20; // fail-safe so the loop can't hang the server
+app.get(
+  "/movies/random",
+  route(async (req, res) => {
+    for (let attempt = 0; attempt < RANDOM_MAX_ATTEMPTS; attempt++) {
+      const id = randInt(1, RANDOM_MAX_ID);
+
+      let movie;
+      try {
+        movie = await tmdb(`/movie/${id}`);
+      } catch (err) {
+        if (err.status === 404) continue; // dead ID — try another
+        throw err; // real failure (auth, rate-limit, network) — surface it
+      }
+
+      if (movie.adult === false) {
+        return res.json({ movie });
+      }
+      // adult title — discard and keep looking
+    }
+
+    // Fail-safe: the loop maxed out, so return a reliable popular title instead.
+    const page = randInt(1, 500);
+    const popular = await tmdb("/movie/popular", { page });
+    const results = popular.results || [];
+    if (results.length === 0) {
+      const err = new Error("No fallback movie available");
+      err.status = 502;
+      throw err;
+    }
+    const movie = results[randInt(0, results.length - 1)];
+    res.json({ movie, fallback: true });
+  })
+);
+
+// 3. GET /movies/search?query=<text> — search by title. Empty query -> empty list.
 app.get(
   "/movies/search",
   route(async (req, res) => {
@@ -130,7 +178,28 @@ app.get(
   })
 );
 
-// 3. GET /genres — movie genre list. TMDB returns { genres: [{ id, name }] }.
+// 4. GET /people/search?query=<text> — search TMDB people (actors/directors) for
+//    the frontend filters. Returns a trimmed list; empty query -> empty list.
+//    `known_for_department` ("Acting" / "Directing") helps the UI tell them apart.
+app.get(
+  "/people/search",
+  route(async (req, res) => {
+    const query = (req.query.query || "").trim();
+    if (!query) {
+      return res.json({ people: [] });
+    }
+    const data = await tmdb("/search/person", { query, include_adult: "false" });
+    const people = (data.results || []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      profile_path: p.profile_path,
+      known_for_department: p.known_for_department,
+    }));
+    res.json({ people });
+  })
+);
+
+// 5. GET /genres — movie genre list. TMDB returns { genres: [{ id, name }] }.
 app.get(
   "/genres",
   route(async (req, res) => {
@@ -139,7 +208,7 @@ app.get(
   })
 );
 
-// 4. GET /providers — US watch/streaming providers. TMDB items include a large
+// 6. GET /providers — US watch/streaming providers. TMDB items include a large
 //    per-country `display_priorities` map; trim to the fields the frontend uses
 //    and keep `provider_id` (needed to filter via with_watch_providers).
 app.get(
