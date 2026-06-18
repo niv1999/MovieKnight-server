@@ -28,23 +28,23 @@ async function updateMe(req, res, next) {
     }
     if (body.name !== undefined) updates.name = String(body.name).trim();
     if (body.avatarUrl !== undefined) {
-      const a = String(body.avatarUrl).trim();
+      const avatar = String(body.avatarUrl).trim();
       // Accept an empty string (clears it), an image data URL, or an http(s) URL.
       if (
-        a &&
-        !/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(a) &&
-        !/^https?:\/\//i.test(a)
+        avatar &&
+        !/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(avatar) &&
+        !/^https?:\/\//i.test(avatar)
       ) {
         return res
           .status(400)
           .json({ ok: false, error: "avatarUrl must be an image data URL or http(s) URL" });
       }
-      if (a.length > 1_500_000) {
+      if (avatar.length > 1_500_000) {
         return res
           .status(400)
           .json({ ok: false, error: "Avatar image is too large — please use a smaller picture" });
       }
-      updates.avatarUrl = a;
+      updates.avatarUrl = avatar;
     }
     if (body.countryCode !== undefined) {
       updates.countryCode = String(body.countryCode).trim();
