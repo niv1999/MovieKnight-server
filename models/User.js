@@ -7,6 +7,7 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     passwordHash: { type: String, required: true }, // bcryptjs hash — never store plaintext
     name: { type: String },
+    bio: { type: String, default: "" }, // short profile bio; starts empty
     dateOfBirth: { type: Date },
     avatarUrl: { type: String }, // optional
     countryCode: { type: String }, // ISO-3166 alpha-2, optional
