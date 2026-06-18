@@ -1,0 +1,873 @@
+{
+  "info": {
+    "name": "MovieKnight API",
+    "_postman_id": "movieknight-api-collection",
+    "description": "MovieKnight server (Node/Express + MongoDB).\n\n- External API: TMDB (proxied server-side; key stays in .env).\n- JS library embedded (client): Toastify.\n- Response envelope under /api: success { ok:true, data }, error { ok:false, error }.\n- Auth: protected routes need `Authorization: Bearer <token>`. Signup/Login auto-save the token to the {{token}} variable.\n\nSet {{baseUrl}} to your dev (http://localhost:3000) or deployed URL.\n\nNOTE: Collections + Wheel routes are specified in docs/API_CONTRACT.md but land in S5–S6; they are not in this collection yet because they are not implemented on the server.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "description": "Signup / login / me (S4). bcryptjs + JWT. Envelope { ok, data } / { ok, error }.",
+      "item": [
+        {
+          "name": "Signup",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Save the JWT to the {{token}} collection variable for the /me request.",
+                  "var d = pm.response.json();",
+                  "if (d && d.data && d.data.token) {",
+                  "  pm.collectionVariables.set('token', d.data.token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ada Lovelace\",\n  \"email\": \"ada@example.com\",\n  \"username\": \"ada\",\n  \"password\": \"secret123\",\n  \"dateOfBirth\": \"1990-12-10\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "signup"
+              ]
+            },
+            "description": "Create an account. Validates all fields, rejects a duplicate email/username (400), bcrypt-hashes the password, then seeds the 3 default collections (Favorites / Already Watched / Watchlist). Returns a JWT + the safe user (no passwordHash). 201 on success."
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Ada Lovelace\",\n  \"email\": \"ada@example.com\",\n  \"username\": \"ada\",\n  \"password\": \"secret123\",\n  \"dateOfBirth\": \"1990-12-10\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/signup",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "signup"
+                  ]
+                },
+                "description": "Create an account. Validates all fields, rejects a duplicate email/username (400), bcrypt-hashes the password, then seeds the 3 default collections (Favorites / Already Watched / Watchlist). Returns a JWT + the safe user (no passwordHash). 201 on success."
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"token\": \"<jwt>\",\n    \"user\": {\n      \"id\": \"6a3409a3aabd3cd4b3ca6933\",\n      \"username\": \"ada\",\n      \"email\": \"ada@example.com\",\n      \"name\": \"Ada Lovelace\",\n      \"dateOfBirth\": \"1990-12-10T00:00:00.000Z\",\n      \"avatarUrl\": null,\n      \"countryCode\": null,\n      \"createdAt\": \"2026-06-18T15:07:15.003Z\"\n    }\n  }\n}"
+            },
+            {
+              "name": "400 Duplicate",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Ada Lovelace\",\n  \"email\": \"ada@example.com\",\n  \"username\": \"ada\",\n  \"password\": \"secret123\",\n  \"dateOfBirth\": \"1990-12-10\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/signup",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "signup"
+                  ]
+                },
+                "description": "Create an account. Validates all fields, rejects a duplicate email/username (400), bcrypt-hashes the password, then seeds the 3 default collections (Favorites / Already Watched / Watchlist). Returns a JWT + the safe user (no passwordHash). 201 on success."
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"An account with that email already exists\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Save the JWT to the {{token}} collection variable for the /me request.",
+                  "var d = pm.response.json();",
+                  "if (d && d.data && d.data.token) {",
+                  "  pm.collectionVariables.set('token', d.data.token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emailOrUsername\": \"ada\",\n  \"password\": \"secret123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Log in with email OR username + password. Returns a JWT + safe user. 401 (Invalid credentials) on a bad identifier or password — never reveals which."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"emailOrUsername\": \"ada\",\n  \"password\": \"secret123\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/login",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "login"
+                  ]
+                },
+                "description": "Log in with email OR username + password. Returns a JWT + safe user. 401 (Invalid credentials) on a bad identifier or password — never reveals which."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"token\": \"<jwt>\",\n    \"user\": {\n      \"id\": \"6a34...\",\n      \"username\": \"ada\",\n      \"email\": \"ada@example.com\"\n    }\n  }\n}"
+            },
+            {
+              "name": "401 Invalid credentials",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"emailOrUsername\": \"ada\",\n  \"password\": \"secret123\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/login",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "login"
+                  ]
+                },
+                "description": "Log in with email OR username + password. Returns a JWT + safe user. 401 (Invalid credentials) on a bad identifier or password — never reveals which."
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Invalid credentials\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Me (Bearer)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Return the current user for the Bearer token. 401 if the header is missing/malformed, the token is invalid/expired, or the user no longer exists."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/me",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "me"
+                  ]
+                },
+                "description": "Return the current user for the Bearer token. 401 if the header is missing/malformed, the token is invalid/expired, or the user no longer exists."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"user\": {\n      \"id\": \"6a34...\",\n      \"username\": \"ada\",\n      \"email\": \"ada@example.com\",\n      \"name\": \"Ada Lovelace\"\n    }\n  }\n}"
+            },
+            {
+              "name": "401 No token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/me",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "me"
+                  ]
+                },
+                "description": "Return the current user for the Bearer token. 401 if the header is missing/malformed, the token is invalid/expired, or the user no longer exists."
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Missing or malformed Authorization header\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Movies (TMDB-backed)",
+      "description": "Read-only TMDB proxy under /api. External API = TMDB. Envelope { ok, data }.",
+      "item": [
+        {
+          "name": "Search movies (filters + sort)  — complex query #1",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/movies/search?q=matrix&sort=rating_desc&page=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "movies",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "matrix"
+                },
+                {
+                  "key": "sort",
+                  "value": "rating_desc"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "Complex query #1. Text search + server-side filter (genre, yearFrom/yearTo, minRating, minVotes, language, with_cast, with_crew) + sort (popularity|rating_*|title_*|year_*) + pagination (20/page). Empty q → popular feed."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/movies/search?q=matrix",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "movies",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": "matrix"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"id\": 603,\n      \"title\": \"The Matrix\",\n      \"vote_average\": 8.2,\n      \"release_date\": \"1999-03-30\"\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Random movie",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/movies/random",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "movies",
+                "random"
+              ]
+            },
+            "description": "One random non-adult movie (brute-force ID lookup)."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/movies/random",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "movies",
+                    "random"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"id\": 12345,\n    \"title\": \"Some Movie\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Movie details by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/movies/603",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "movies",
+                "603"
+              ]
+            },
+            "description": "Full details for one movie (overview, genres, director, top cast, trailer key) for the Movie page."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/movies/603",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "movies",
+                    "603"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"id\": 603,\n    \"title\": \"The Matrix\",\n    \"release_date\": \"1999-03-30\",\n    \"overview\": \"A computer hacker learns…\",\n    \"genres\": [\n      \"Action\",\n      \"Science Fiction\"\n    ],\n    \"director\": \"Lana Wachowski\",\n    \"cast\": [\n      \"Keanu Reeves\",\n      \"Laurence Fishburne\"\n    ],\n    \"trailerKey\": \"vKQi3bBA1y8\"\n  }\n}"
+            },
+            {
+              "name": "400 Invalid id",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/movies/abc",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "movies",
+                    "abc"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Invalid movie id\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Genres",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/genres",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genres"
+              ]
+            },
+            "description": "Movie genre list as [{ id, name }]. The id is used to filter search by genre."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/genres",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "genres"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"id\": 28,\n      \"name\": \"Action\"\n    },\n    {\n      \"id\": 12,\n      \"name\": \"Adventure\"\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Providers (US)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/providers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "providers"
+              ]
+            },
+            "description": "US watch/streaming providers as [{ provider_id, provider_name, logo_path, display_priority }]."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/providers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "providers"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"provider_id\": 8,\n      \"provider_name\": \"Netflix\",\n      \"logo_path\": \"/x.jpg\",\n      \"display_priority\": 0\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "People search",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/people/search?q=nolan",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "people",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "nolan"
+                }
+              ]
+            },
+            "description": "Search TMDB people (actors/directors) for the filters. Empty q → []."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/people/search?q=nolan",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "people",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": "nolan"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"id\": 525,\n      \"name\": \"Christopher Nolan\",\n      \"profile_path\": \"/x.jpg\",\n      \"known_for_department\": \"Directing\"\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "People popular",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/people/popular?page=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "people",
+                "popular"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "Popular (English-biased) people to pre-fill the actor/director dropdowns."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/people/popular?page=1",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "people",
+                    "popular"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"id\": 500,\n      \"name\": \"Tom Cruise\",\n      \"profile_path\": \"/x.jpg\",\n      \"known_for_department\": \"Acting\"\n    }\n  ]\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "description": "Server liveness probe.",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": []
+            },
+            "description": "Liveness probe. → { ok: true, service: 'movieknight-tmdb-proxy' }"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": []
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"service\": \"movieknight-tmdb-proxy\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

@@ -25,7 +25,16 @@ const savedWheelItemSchema = new mongoose.Schema(
 
 const collectionSchema = new mongoose.Schema(
   {
-    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, // owner
+    // Owner. Indexed: every "list a user's collections" query filters on this
+    // (Collection.find({ userId })), so the index turns a collection scan into a
+    // direct lookup — this is what makes the one-to-many efficient, not a
+    // collections[] array on the user (see note below / docs/DATA_MODEL.md).
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
     name: { type: String, required: true },
     isPublic: { type: Boolean, default: false },
     isDefault: { type: Boolean, default: false }, // true for Favorites / Already Watched / Watchlist

@@ -1,474 +1,55 @@
-// index.js — MovieKnight TMDB proxy.
-// A thin Express server that forwards a few read-only calls to the TMDB v3 API
-// so the frontend never has to hold the API key. All TMDB calls happen here.
+// index.js — MovieKnight API server (Node/Express).
+// Thin entry point: middleware + route mounting + DB connection. Every TMDB call
+// lives behind a controller (services/tmdb.js holds the key), so the frontend
+// never sees the API key. Routes are split into routes/ + controllers/ (the
+// taught layout); see docs/API_CONTRACT.md for the full contract.
 
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const connectDB = require("./db_connection");
 
+const movieRoutes = require("./routes/movieRoutes");
+const peopleRoutes = require("./routes/peopleRoutes");
+const catalogRoutes = require("./routes/catalogRoutes");
+const authRoutes = require("./routes/authRoutes");
+const userRoutes = require("./routes/userRoutes");
+
 const app = express();
 const PORT = process.env.PORT || 3000;
-const TMDB_BASE = "https://api.themoviedb.org/3";
-const TMDB_API_KEY = process.env.TMDB_API_KEY;
 
-// --- CORS: allow any origin, GET only, accept the Accept header ---
+// --- CORS: allow any origin. GET for the proxy reads; POST/PUT/PATCH/DELETE for
+//     the auth + (upcoming) collections CRUD routes. Authorization carries the
+//     Bearer token; Content-Type is needed for JSON request bodies. ---
 app.use(
   cors({
     origin: "*",
-    methods: ["GET"],
-    allowedHeaders: ["Accept"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allowedHeaders: ["Accept", "Content-Type", "Authorization"],
   })
 );
 
-// --- helper: call TMDB and return parsed JSON, throwing on a non-2xx ---
-// `path` is a TMDB path like "/movie/popular"; `params` are extra query params.
-async function tmdb(path, params = {}) {
-  if (!TMDB_API_KEY) {
-    const err = new Error("TMDB_API_KEY is not configured on the server");
-    err.status = 500;
-    throw err;
-  }
-
-  const url = new URL(TMDB_BASE + path);
-  url.searchParams.set("api_key", TMDB_API_KEY);
-  url.searchParams.set("language", "en-US");
-  for (const [key, value] of Object.entries(params)) {
-    url.searchParams.set(key, value);
-  }
-
-  const res = await fetch(url);
-  if (!res.ok) {
-    let detail = "";
-    try {
-      const body = await res.json();
-      detail = body.status_message || "";
-    } catch (_) {
-      /* non-JSON error body */
-    }
-    const err = new Error(`TMDB request failed${detail ? `: ${detail}` : ""}`);
-    // Map TMDB's status straight through (the frontend treats non-2xx as failure).
-    err.status = res.status;
-    throw err;
-  }
-
-  return res.json();
-}
-
-// small wrapper so each route stays a one-liner and errors hit the handler below
-const route = (fn) => (req, res, next) => fn(req, res).catch(next);
+// Parse JSON request bodies (auth/collections POST + PUT). Harmless for GET routes.
+app.use(express.json());
 
 // --- health check ---
 app.get("/", (req, res) => {
   res.json({ ok: true, service: "movieknight-tmdb-proxy" });
 });
 
-// TMDB /discover/movie params the frontend may send. Names are TMDB-native and
-// are forwarded straight through.
-const DISCOVER_PARAMS = [
-  "with_genres", // comma-separated genre IDs, e.g. "28,12"
-  "with_cast", // person ID(s) to filter by cast (actor), e.g. "500"
-  "with_crew", // person ID(s) to filter by crew (director), e.g. "525"
-  "with_watch_providers", // pipe-separated provider IDs, e.g. "8|9"
-  "watch_region", // sent with with_watch_providers (US)
-  "primary_release_date.gte", // YYYY-01-01
-  "primary_release_date.lte", // YYYY-12-31
-  "vote_average.gte", // 0–10
-  "vote_count.gte", // optional floor; defaulted below when rating-filtering
-  "sort_by", // optional catalog-wide sort (not sent by the frontend yet)
-];
-
-// Clamp a ?page value to a valid TMDB page: an integer in 1–500, default 1.
-function clampPage(raw) {
-  const n = Math.trunc(Number(raw));
-  if (!Number.isFinite(n)) return 1;
-  return Math.min(500, Math.max(1, n));
-}
-
-// Inclusive random integer in [min, max].
-function randInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-// 1. GET /movies — popular movies, or a filtered catalog when any discover param
-//    is present. Both accept ?page (1–500) and return { movies: [...] }.
-app.get(
-  "/movies",
-  route(async (req, res) => {
-    const page = String(clampPage(req.query.page));
-
-    const params = {};
-    for (const key of DISCOVER_PARAMS) {
-      const value = req.query[key];
-      if (value !== undefined && value !== "") params[key] = value;
-    }
-
-    // No filters -> the original popular feed.
-    if (Object.keys(params).length === 0) {
-      const data = await tmdb("/movie/popular", { page });
-      return res.json({ movies: data.results });
-    }
-
-    // Provider filtering needs a region; default to US if the client omitted it.
-    if (params["with_watch_providers"] && !params["watch_region"]) {
-      params["watch_region"] = "US";
-    }
-    // Keep rating filters from surfacing obscure titles with very few votes.
-    if (params["vote_average.gte"] && params["vote_count.gte"] === undefined) {
-      params["vote_count.gte"] = "50";
-    }
-    params["include_adult"] = "false";
-    params["page"] = page;
-
-    const data = await tmdb("/discover/movie", params);
-    res.json({ movies: data.results });
-  })
-);
-
-// Pick one truly random (often obscure), non-adult movie.
-//    TMDB has no native random endpoint, so we brute-force it: pick a random ID,
-//    fetch /movie/{id}, and retry on a 404 (dead ID) or an adult title. To avoid
-//    hanging when we keep hitting dead/adult IDs, we cap attempts and fall back to
-//    a random title from the popular feed (pages 1–500).
-//    Returns { movie, fallback } — fallback is true when the loop maxed out.
-const RANDOM_MAX_ID = 1_200_000; // rough upper bound of TMDB movie IDs
-const RANDOM_MAX_ATTEMPTS = 20; // fail-safe so the loop can't hang the server
-async function pickRandomMovie() {
-  for (let attempt = 0; attempt < RANDOM_MAX_ATTEMPTS; attempt++) {
-    const id = randInt(1, RANDOM_MAX_ID);
-
-    let movie;
-    try {
-      movie = await tmdb(`/movie/${id}`);
-    } catch (err) {
-      if (err.status === 404) continue; // dead ID — try another
-      throw err; // real failure (auth, rate-limit, network) — surface it
-    }
-
-    if (movie.adult === false) {
-      return { movie, fallback: false };
-    }
-    // adult title — discard and keep looking
-  }
-
-  // Fail-safe: the loop maxed out, so return a reliable popular title instead.
-  const popular = await tmdb("/movie/popular", { page: randInt(1, 500) });
-  const results = popular.results || [];
-  if (results.length === 0) {
-    const err = new Error("No fallback movie available");
-    err.status = 502;
-    throw err;
-  }
-  return { movie: results[randInt(0, results.length - 1)], fallback: true };
-}
-
-// 2. GET /movies/random — one random movie (prefix-less proxy shape).
-app.get(
-  "/movies/random",
-  route(async (req, res) => {
-    const { movie, fallback } = await pickRandomMovie();
-    res.json(fallback ? { movie, fallback: true } : { movie });
-  })
-);
-
-// 3. GET /movies/search?query=<text> — search by title. Empty query -> empty list.
-app.get(
-  "/movies/search",
-  route(async (req, res) => {
-    const query = (req.query.query || "").trim();
-    if (!query) {
-      return res.json({ movies: [] });
-    }
-    const data = await tmdb("/search/movie", { query, include_adult: "false" });
-    res.json({ movies: data.results });
-  })
-);
-
-// ===========================================================================
-// /api contract endpoints — standard envelope { ok:true, data } / { ok:false, error }
-// These follow the official API contract (/api prefix). The prefix-less proxy
-// routes above predate the contract and keep their named-payload shape for now.
-// ===========================================================================
-
-// Server-side sort comparators for /api/movies/search. Keys are the allowable
-// `sort` values; default is "popularity".
-const DEFAULT_SORT = "popularity";
-const releaseYear = (m) => {
-  const y = parseInt(String(m.release_date || "").slice(0, 4), 10);
-  return Number.isFinite(y) ? y : null; // null = undated
-};
-// Year comparator that keeps undated titles at the bottom in both directions.
-const byYear = (dir) => (a, b) => {
-  const ya = releaseYear(a);
-  const yb = releaseYear(b);
-  if (ya === null && yb === null) return 0;
-  if (ya === null) return 1; // undated always sinks
-  if (yb === null) return -1;
-  return dir === "asc" ? ya - yb : yb - ya;
-};
-const SORTERS = {
-  popularity: (a, b) => (b.popularity || 0) - (a.popularity || 0),
-  rating_desc: (a, b) => (b.vote_average || 0) - (a.vote_average || 0),
-  rating_asc: (a, b) => (a.vote_average || 0) - (b.vote_average || 0),
-  title_asc: (a, b) => String(a.title || "").localeCompare(String(b.title || "")),
-  title_desc: (a, b) => String(b.title || "").localeCompare(String(a.title || "")),
-  year_desc: byYear("desc"),
-  year_asc: byYear("asc"),
-};
-
-const SEARCH_PAGE_SIZE = 20; // movies returned per response page
-const SEARCH_SOURCE_PAGES = 5; // TMDB pages pulled before sorting (caps the sort window at ~100)
-
-// Source feed for search. Cast/crew filtering only exists on /discover (TMDB's
-// /search/movie ignores it), so any person filter forces the discover endpoint;
-// otherwise a `q` uses text search and a bare request uses the popular catalog.
-// Quality-control filters (minVotes -> vote_count.gte, language ->
-// with_original_language) are TMDB-native and so are pushed into every /discover
-// call; the /search/movie path can't honor them, so the handler also applies
-// them server-side (see below).
-const searchSource = (q, page, { withCast, withCrew, minVotes, language } = {}) => {
-  // Discover-only filters that TMDB applies natively on the catalog feed.
-  const discoverFilters = {};
-  if (minVotes !== null && minVotes !== undefined) discoverFilters["vote_count.gte"] = minVotes;
-  if (language) discoverFilters.with_original_language = language;
-
-  if (withCast || withCrew) {
-    const params = { include_adult: "false", sort_by: "popularity.desc", page, ...discoverFilters };
-    if (withCast) params.with_cast = withCast;
-    if (withCrew) params.with_crew = withCrew;
-    return tmdb("/discover/movie", params);
-  }
-  if (q) {
-    return tmdb("/search/movie", { query: q, include_adult: "false", page });
-  }
-  return tmdb("/discover/movie", {
-    include_adult: "false",
-    sort_by: "popularity.desc",
-    page,
-    ...discoverFilters,
-  });
-};
-
-// GET /api/movies/search — text search with server-side filtering, sorting, and
-// pagination. Params: q, genre, yearFrom, yearTo, minRating, with_cast, with_crew,
-// sort (default popularity), page. Empty q -> popular movies feed. Sorting is
-// global across a capped window of source results (not just one TMDB page).
-app.get(
-  "/api/movies/search",
-  route(async (req, res) => {
-    const q = String(req.query.q || "").trim();
-    const sort = SORTERS[req.query.sort] ? req.query.sort : DEFAULT_SORT;
-    const page = clampPage(req.query.page);
-    const genre = req.query.genre ? Number(req.query.genre) : null;
-    const yearFrom = req.query.yearFrom ? Number(req.query.yearFrom) : null;
-    const yearTo = req.query.yearTo ? Number(req.query.yearTo) : null;
-    const minRating = req.query.minRating ? Number(req.query.minRating) : null;
-    const minVotes = req.query.minVotes ? Number(req.query.minVotes) : null;
-    const language = req.query.language ? String(req.query.language).trim() : null;
-    const withCast = req.query.with_cast ? String(req.query.with_cast) : null;
-    const withCrew = req.query.with_crew ? String(req.query.with_crew) : null;
-    const filters = { withCast, withCrew, minVotes, language };
-
-    // Pull a capped window so the sort spans more than a single TMDB page.
-    const first = await searchSource(q, 1, filters);
-    const sourcePages = Math.min(SEARCH_SOURCE_PAGES, first.total_pages || 1);
-    let results = first.results || [];
-    if (sourcePages > 1) {
-      const rest = await Promise.all(
-        Array.from({ length: sourcePages - 1 }, (_, i) => searchSource(q, i + 2, filters))
-      );
-      for (const r of rest) results = results.concat(r.results || []);
-    }
-
-    // A person filter forces the discover endpoint, which can't honor free text,
-    // so match the title query client-side when both are supplied.
-    if ((withCast || withCrew) && q) {
-      const needle = q.toLowerCase();
-      results = results.filter((m) =>
-        String(m.title || "").toLowerCase().includes(needle)
-      );
-    }
-
-    // Server-side filtering.
-    if (genre !== null) {
-      results = results.filter((m) => (m.genre_ids || []).includes(genre));
-    }
-    if (yearFrom !== null || yearTo !== null) {
-      results = results.filter((m) => {
-        const y = releaseYear(m);
-        if (y === null) return false; // undated titles excluded when a year range is set
-        if (yearFrom !== null && y < yearFrom) return false;
-        if (yearTo !== null && y > yearTo) return false;
-        return true;
-      });
-    }
-    if (minRating !== null) {
-      results = results.filter((m) => (m.vote_average || 0) >= minRating);
-    }
-    // Quality-control filters. /discover honors these natively (passed through
-    // searchSource); re-apply server-side so the /search/movie text path, which
-    // ignores them, stays consistent.
-    if (minVotes !== null) {
-      results = results.filter((m) => (m.vote_count || 0) >= minVotes);
-    }
-    if (language !== null) {
-      results = results.filter((m) => m.original_language === language);
-    }
-
-    // Server-side sort, then paginate the ordered list.
-    results.sort(SORTERS[sort]);
-    const start = (page - 1) * SEARCH_PAGE_SIZE;
-    const data = results.slice(start, start + SEARCH_PAGE_SIZE);
-
-    res.json({ ok: true, data });
-  })
-);
-
-// GET /api/movies/random — one random movie, contract envelope.
-app.get(
-  "/api/movies/random",
-  route(async (req, res) => {
-    const { movie } = await pickRandomMovie();
-    res.json({ ok: true, data: movie });
-  })
-);
-
-// GET /api/movies/:id — full details for one movie, used by the Movie Details
-// page. One TMDB call with credits + videos appended, trimmed to what the page
-// renders: overview, genres, director, top cast, and a YouTube trailer key.
-// Registered AFTER /api/movies/search and /api/movies/random so those literal
-// paths aren't swallowed by the :id param.
-app.get(
-  "/api/movies/:id",
-  route(async (req, res) => {
-    const id = Math.trunc(Number(req.params.id));
-    if (!Number.isFinite(id) || id <= 0) {
-      const err = new Error("Invalid movie id");
-      err.status = 400;
-      throw err;
-    }
-
-    const movie = await tmdb(`/movie/${id}`, {
-      append_to_response: "credits,videos",
-    });
-
-    const crew = (movie.credits && movie.credits.crew) || [];
-    const director = crew.find((c) => c.job === "Director");
-
-    const videos = (movie.videos && movie.videos.results) || [];
-    // Prefer an official YouTube "Trailer"; fall back to any YouTube clip.
-    const trailer =
-      videos.find((v) => v.site === "YouTube" && v.type === "Trailer") ||
-      videos.find((v) => v.site === "YouTube");
-
-    res.json({
-      ok: true,
-      data: {
-        id: movie.id,
-        title: movie.title || movie.original_title || "",
-        release_date: movie.release_date || "",
-        overview: movie.overview || "",
-        tagline: movie.tagline || "",
-        runtime: movie.runtime || null,
-        vote_average: movie.vote_average || 0,
-        poster_path: movie.poster_path || null,
-        backdrop_path: movie.backdrop_path || null,
-        genres: (movie.genres || []).map((g) => g.name),
-        director: director ? director.name : "",
-        cast: ((movie.credits && movie.credits.cast) || [])
-          .slice(0, 4)
-          .map((c) => c.name),
-        trailerKey: trailer ? trailer.key : null,
-      },
-    });
-  })
-);
-
-// GET /api/genres — movie genre list. data = [{ id, name }].
-app.get(
-  "/api/genres",
-  route(async (req, res) => {
-    const data = await tmdb("/genre/movie/list");
-    res.json({ ok: true, data: data.genres || [] });
-  })
-);
-
-// GET /api/providers — US watch/streaming providers. TMDB items include a large
-// per-country `display_priorities` map; trim to the fields the frontend uses and
-// keep `provider_id` (needed to filter via with_watch_providers).
-app.get(
-  "/api/providers",
-  route(async (req, res) => {
-    const tmdbData = await tmdb("/watch/providers/movie", { watch_region: "US" });
-    const data = (tmdbData.results || []).map((p) => ({
-      provider_id: p.provider_id,
-      provider_name: p.provider_name,
-      logo_path: p.logo_path,
-      display_priority: p.display_priority,
-    }));
-    res.json({ ok: true, data });
-  })
-);
-
-// Trim a TMDB person to the shape both people routes return.
-const mapPerson = (p) => ({
-  id: p.id,
-  name: p.name,
-  profile_path: p.profile_path,
-  known_for_department: p.known_for_department,
-});
-
-// GET /api/people/search?q=<text> — search TMDB people (actors/directors) for the
-// filters. Accepts `q` (or legacy `query`). `known_for_department` ("Acting" /
-// "Directing") helps the UI tell them apart. Empty query -> data: [].
-app.get(
-  "/api/people/search",
-  route(async (req, res) => {
-    const query = String(req.query.q || req.query.query || "").trim();
-    if (!query) {
-      return res.json({ ok: true, data: [] });
-    }
-    const tmdbData = await tmdb("/search/person", { query, include_adult: "false" });
-    res.json({ ok: true, data: (tmdbData.results || []).map(mapPerson) });
-  })
-);
-
-// TMDB's /person/popular is global (and `language=` only translates fields — it
-// doesn't regionalize the ranking, and there's no region param). To bias toward
-// US/Hollywood names we keep people whose `known_for` titles are mostly English.
-const PEOPLE_POPULAR_SOURCE_PAGES = 3; // pulled per response so ~20 remain after filtering
-const isMostlyEnglish = (p) => {
-  const langs = (p.known_for || []).map((k) => k.original_language).filter(Boolean);
-  if (langs.length === 0) return false;
-  const english = langs.filter((l) => l === "en").length;
-  return english / langs.length >= 0.5;
-};
-
-// GET /api/people/popular — popular (English-biased) people to pre-fill the
-// actor/director dropdowns before the user types. Same item shape as
-// /api/people/search. Accepts ?page.
-app.get(
-  "/api/people/popular",
-  route(async (req, res) => {
-    const page = clampPage(req.query.page);
-    // Pull a window of source pages so enough English-known people survive the filter.
-    const startPage = (page - 1) * PEOPLE_POPULAR_SOURCE_PAGES + 1;
-    const pages = await Promise.all(
-      Array.from({ length: PEOPLE_POPULAR_SOURCE_PAGES }, (_, i) =>
-        tmdb("/person/popular", { page: startPage + i })
-      )
-    );
-
-    let people = [];
-    for (const pg of pages) people = people.concat(pg.results || []);
-    const data = people.filter(isMostlyEnglish).slice(0, 20).map(mapPerson);
-    res.json({ ok: true, data });
-  })
-);
+// --- API routes (controllers + routes, the taught layout) ---
+// Mounted at the root; each router declares its own full paths.
+app.use(movieRoutes); //   /movies (legacy) + /api/movies/*
+app.use(peopleRoutes); //  /api/people/*
+app.use(catalogRoutes); // /api/genres, /api/providers
+app.use("/api/auth", authRoutes); //  /api/auth/signup, /login, /me
+app.use("/api/users", userRoutes); // /api/users/me (PATCH profile)
 
 // --- 404: contract envelope under /api, named-payload shape elsewhere ---
+// Use req.originalUrl (never rewritten by sub-routers) so the shape stays correct
+// for routes served via app.use("/api/...", router), not just inline app.get.
 app.use((req, res) => {
-  if (req.path.startsWith("/api/")) {
+  if (req.originalUrl.startsWith("/api/")) {
     return res.status(404).json({ ok: false, error: "Not found" });
   }
   res.status(404).json({ error: "Not found" });
@@ -479,14 +60,14 @@ app.use((err, req, res, next) => {
   const status = err.status || 500;
   if (status >= 500) console.error(err);
   const message = err.message || "Server error";
-  if (req.path.startsWith("/api/")) {
+  if (req.originalUrl.startsWith("/api/")) {
     return res.status(status).json({ ok: false, error: message });
   }
   res.status(status).json({ error: message });
 });
 
 // Open the MongoDB connection on startup. Non-fatal: the TMDB proxy still serves
-// even if the database is unreachable (controllers aren't wired to it yet).
+// even if the database is unreachable.
 connectDB().catch((err) => {
   console.error("⚠️  MongoDB connection failed:", err.message);
 });
