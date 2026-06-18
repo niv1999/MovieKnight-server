@@ -67,47 +67,62 @@ const SORTERS = {
   year_asc: byYear("asc"),
 };
 
-const SEARCH_PAGE_SIZE = 20; // movies returned per response page
-const SEARCH_SOURCE_PAGES = 5; // TMDB pages pulled before sorting (caps the sort window at ~100)
+// Our `sort` values -> TMDB /discover `sort_by`. TMDB has no title sort, so
+// title_* maps to original_title.*; year_* maps to primary_release_date.*.
+// (/search/movie ignores sort_by entirely; the text path sorts within the page.)
+const SORT_BY = {
+  popularity: "popularity.desc",
+  rating_desc: "vote_average.desc",
+  rating_asc: "vote_average.asc",
+  title_asc: "original_title.asc",
+  title_desc: "original_title.desc",
+  year_desc: "primary_release_date.desc",
+  year_asc: "primary_release_date.asc",
+};
 
-// Source feed for search. Cast/crew filtering only exists on /discover (TMDB's
-// /search/movie ignores it), so any person filter forces the discover endpoint;
-// otherwise a `q` uses text search and a bare request uses the popular catalog.
-// Quality-control filters (minVotes -> vote_count.gte, language ->
-// with_original_language) are TMDB-native and so are pushed into every /discover
-// call; the /search/movie path can't honor them, so the handler also applies
-// them server-side (see below).
-const searchSource = (q, page, { withCast, withCrew, minVotes, language } = {}) => {
-  // Discover-only filters that TMDB applies natively on the catalog feed.
-  const discoverFilters = {};
-  if (minVotes !== null && minVotes !== undefined) discoverFilters["vote_count.gte"] = minVotes;
-  if (language) discoverFilters.with_original_language = language;
+// Default vote floor for rating sorts so a handful of single-vote 10.0 titles
+// don't dominate. Only applied when the caller didn't set their own minVotes.
+const RATING_SORT_VOTE_FLOOR = 50;
 
-  if (withCast || withCrew) {
-    const params = { include_adult: "false", sort_by: "popularity.desc", page, ...discoverFilters };
-    if (withCast) params.with_cast = withCast;
-    if (withCrew) params.with_crew = withCrew;
-    return tmdb("/discover/movie", params);
+// Free-text search via TMDB /search/movie. That endpoint can't honor discover
+// filters or sort_by, so we re-apply the filters server-side and sort within the
+// page. `page` is forwarded 1:1 to TMDB, so pages stay full as the user scrolls
+// (a filter may trim a page, but nothing is sliced or capped to a fixed pool).
+const searchByText = async (q, page, f) => {
+  const data = await tmdb("/search/movie", { query: q, include_adult: "false", page });
+  let results = data.results || [];
+  if (f.genre !== null) {
+    results = results.filter((m) => (m.genre_ids || []).includes(f.genre));
   }
-  if (q) {
-    return tmdb("/search/movie", { query: q, include_adult: "false", page });
+  if (f.yearFrom !== null || f.yearTo !== null) {
+    results = results.filter((m) => {
+      const y = releaseYear(m);
+      if (y === null) return false; // undated excluded when a year range is set
+      if (f.yearFrom !== null && y < f.yearFrom) return false;
+      if (f.yearTo !== null && y > f.yearTo) return false;
+      return true;
+    });
   }
-  return tmdb("/discover/movie", {
-    include_adult: "false",
-    sort_by: "popularity.desc",
-    page,
-    ...discoverFilters,
-  });
+  if (f.minRating !== null) results = results.filter((m) => (m.vote_average || 0) >= f.minRating);
+  if (f.minVotes !== null) results = results.filter((m) => (m.vote_count || 0) >= f.minVotes);
+  if (f.language !== null) results = results.filter((m) => m.original_language === f.language);
+  results.sort(SORTERS[f.sort]); // /search/movie can't sort_by — order within the page
+  return results;
 };
 
 // ===========================================================================
 // /api contract handlers — envelope { ok:true, data } / { ok:false, error }.
 // ===========================================================================
 
-// GET /api/movies/search — text search with server-side filtering, sorting, and
-// pagination. Params: q, genre, yearFrom, yearTo, minRating, with_cast, with_crew,
-// sort (default popularity), page. Empty q -> popular movies feed. Sorting is
-// global across a capped window of source results (not just one TMDB page).
+// GET /api/movies/search — filtered/sorted movie feed with continuous pagination.
+// Params: q, genre, yearFrom, yearTo, minRating, minVotes, language, with_cast,
+// with_crew, sort (default popularity), page. Empty q -> the discover catalog feed.
+//
+// `page` maps 1:1 to the underlying TMDB page (TMDB serves up to page 500) and
+// every filter is pushed into TMDB as a native /discover param, so result sets
+// don't shrink as you scroll — we return an empty array only when TMDB itself
+// runs out of pages. The free-text path (q without a person filter) must use
+// /search/movie, which ignores those params, so it re-applies them server-side.
 async function search(req, res) {
   const q = String(req.query.q || "").trim();
   const sort = SORTERS[req.query.sort] ? req.query.sort : DEFAULT_SORT;
@@ -120,58 +135,43 @@ async function search(req, res) {
   const language = req.query.language ? String(req.query.language).trim() : null;
   const withCast = req.query.with_cast ? String(req.query.with_cast) : null;
   const withCrew = req.query.with_crew ? String(req.query.with_crew) : null;
-  const filters = { withCast, withCrew, minVotes, language };
 
-  // Pull a capped window so the sort spans more than a single TMDB page.
-  const first = await searchSource(q, 1, filters);
-  const sourcePages = Math.min(SEARCH_SOURCE_PAGES, first.total_pages || 1);
-  let results = first.results || [];
-  if (sourcePages > 1) {
-    const rest = await Promise.all(
-      Array.from({ length: sourcePages - 1 }, (_, i) => searchSource(q, i + 2, filters))
-    );
-    for (const r of rest) results = results.concat(r.results || []);
-  }
-
-  // A person filter forces the discover endpoint, which can't honor free text,
-  // so match the title query client-side when both are supplied.
-  if ((withCast || withCrew) && q) {
-    const needle = q.toLowerCase();
-    results = results.filter((m) =>
-      String(m.title || "").toLowerCase().includes(needle)
-    );
-  }
-
-  // Server-side filtering.
-  if (genre !== null) {
-    results = results.filter((m) => (m.genre_ids || []).includes(genre));
-  }
-  if (yearFrom !== null || yearTo !== null) {
-    results = results.filter((m) => {
-      const y = releaseYear(m);
-      if (y === null) return false; // undated titles excluded when a year range is set
-      if (yearFrom !== null && y < yearFrom) return false;
-      if (yearTo !== null && y > yearTo) return false;
-      return true;
+  // Free-text search (no person filter): /search/movie, page forwarded 1:1.
+  if (q && !withCast && !withCrew) {
+    const data = await searchByText(q, page, {
+      genre, yearFrom, yearTo, minRating, minVotes, language, sort,
     });
-  }
-  if (minRating !== null) {
-    results = results.filter((m) => (m.vote_average || 0) >= minRating);
-  }
-  // Quality-control filters. /discover honors these natively (passed through
-  // searchSource); re-apply server-side so the /search/movie text path, which
-  // ignores them, stays consistent.
-  if (minVotes !== null) {
-    results = results.filter((m) => (m.vote_count || 0) >= minVotes);
-  }
-  if (language !== null) {
-    results = results.filter((m) => m.original_language === language);
+    return res.json({ ok: true, data });
   }
 
-  // Server-side sort, then paginate the ordered list.
-  results.sort(SORTERS[sort]);
-  const start = (page - 1) * SEARCH_PAGE_SIZE;
-  const data = results.slice(start, start + SEARCH_PAGE_SIZE);
+  // Everything else uses /discover with every filter as a native param and the
+  // page forwarded straight through.
+  const params = {
+    include_adult: "false",
+    sort_by: SORT_BY[sort],
+    page,
+  };
+  if (genre !== null) params.with_genres = genre;
+  if (yearFrom !== null) params["primary_release_date.gte"] = `${yearFrom}-01-01`;
+  if (yearTo !== null) params["primary_release_date.lte"] = `${yearTo}-12-31`;
+  if (minRating !== null) params["vote_average.gte"] = minRating;
+  if (minVotes !== null) params["vote_count.gte"] = minVotes;
+  else if (minRating !== null || sort === "rating_desc" || sort === "rating_asc") {
+    params["vote_count.gte"] = RATING_SORT_VOTE_FLOOR;
+  }
+  if (language !== null) params.with_original_language = language;
+  if (withCast) params.with_cast = withCast;
+  if (withCrew) params.with_crew = withCrew;
+
+  const tmdbData = await tmdb("/discover/movie", params);
+  let data = tmdbData.results || [];
+
+  // /discover can't honor free text, so when a person filter is combined with a
+  // title query, match the title server-side on the person-filtered page.
+  if (q && (withCast || withCrew)) {
+    const needle = q.toLowerCase();
+    data = data.filter((m) => String(m.title || "").toLowerCase().includes(needle));
+  }
 
   res.json({ ok: true, data });
 }
