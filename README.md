@@ -16,6 +16,7 @@ API key:
 ```
 TMDB_API_KEY=your_tmdb_v3_api_key_here
 PORT=3000
+MONGODB_URI=your_mongo_db_uri
 ```
 
 > Get the key from themoviedb.org → **Settings → API → "API Key (v3 auth)"**.
