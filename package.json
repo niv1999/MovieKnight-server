@@ -10,11 +10,17 @@
   "engines": {
     "node": ">=18"
   },
-  "keywords": ["movieknight", "express", "tmdb", "proxy"],
+  "keywords": [
+    "movieknight",
+    "express",
+    "tmdb",
+    "proxy"
+  ],
   "license": "MIT",
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "mongoose": "^9.7.1"
   }
 }
