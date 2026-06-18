@@ -3,6 +3,7 @@
 // Handlers are plain async (req, res); the routes/ layer wraps them with route().
 
 const { tmdb, clampPage, randInt } = require("../services/tmdb");
+const movieCache = require("../services/movieCache");
 
 // Pick one truly random (often obscure), non-adult movie.
 //    TMDB has no native random endpoint, so we brute-force it: pick a random ID,
@@ -136,43 +137,70 @@ async function search(req, res) {
   const withCast = req.query.with_cast ? String(req.query.with_cast) : null;
   const withCrew = req.query.with_crew ? String(req.query.with_crew) : null;
 
-  // Free-text search (no person filter): /search/movie, page forwarded 1:1.
-  if (q && !withCast && !withCrew) {
-    const data = await searchByText(q, page, {
-      genre, yearFrom, yearTo, minRating, minVotes, language, sort,
-    });
-    return res.json({ ok: true, data });
-  }
-
-  // Everything else uses /discover with every filter as a native param and the
-  // page forwarded straight through.
-  const params = {
-    include_adult: "false",
-    sort_by: SORT_BY[sort],
+  // Fingerprint the request for the feed cache. genre is kept as its RAW query
+  // string (it may be a comma-joined multi-id like "28,12"); the rest are the
+  // normalized single values. Two requests with the same fingerprint share a
+  // cached page; anything that changes the results changes the key.
+  // NOTE: any NEW filter added to the TMDB params below MUST also be added here,
+  // or two different queries would collide on one cached (wrong) page.
+  const keyParams = {
+    q,
+    sort,
     page,
+    genre: req.query.genre ? String(req.query.genre) : null,
+    yearFrom,
+    yearTo,
+    minRating,
+    minVotes,
+    language,
+    with_cast: withCast,
+    with_crew: withCrew,
   };
-  if (genre !== null) params.with_genres = genre;
-  if (yearFrom !== null) params["primary_release_date.gte"] = `${yearFrom}-01-01`;
-  if (yearTo !== null) params["primary_release_date.lte"] = `${yearTo}-12-31`;
-  if (minRating !== null) params["vote_average.gte"] = minRating;
-  if (minVotes !== null) params["vote_count.gte"] = minVotes;
-  else if (minRating !== null || sort === "rating_desc" || sort === "rating_asc") {
-    params["vote_count.gte"] = RATING_SORT_VOTE_FLOOR;
-  }
-  if (language !== null) params.with_original_language = language;
-  if (withCast) params.with_cast = withCast;
-  if (withCrew) params.with_crew = withCrew;
 
-  const tmdbData = await tmdb("/discover/movie", params);
-  let data = tmdbData.results || [];
+  // The real TMDB fetch — only runs on a cache miss (or when Mongo is unavailable).
+  const fetchFromTmdb = async () => {
+    // Free-text search (no person filter): /search/movie, page forwarded 1:1.
+    if (q && !withCast && !withCrew) {
+      return searchByText(q, page, {
+        genre, yearFrom, yearTo, minRating, minVotes, language, sort,
+      });
+    }
 
-  // /discover can't honor free text, so when a person filter is combined with a
-  // title query, match the title server-side on the person-filtered page.
-  if (q && (withCast || withCrew)) {
-    const needle = q.toLowerCase();
-    data = data.filter((m) => String(m.title || "").toLowerCase().includes(needle));
-  }
+    // Everything else uses /discover with every filter as a native param and the
+    // page forwarded straight through.
+    const params = {
+      include_adult: "false",
+      sort_by: SORT_BY[sort],
+      page,
+    };
+    if (genre !== null) params.with_genres = genre;
+    if (yearFrom !== null) params["primary_release_date.gte"] = `${yearFrom}-01-01`;
+    if (yearTo !== null) params["primary_release_date.lte"] = `${yearTo}-12-31`;
+    if (minRating !== null) params["vote_average.gte"] = minRating;
+    if (minVotes !== null) params["vote_count.gte"] = minVotes;
+    else if (minRating !== null || sort === "rating_desc" || sort === "rating_asc") {
+      params["vote_count.gte"] = RATING_SORT_VOTE_FLOOR;
+    }
+    if (language !== null) params.with_original_language = language;
+    if (withCast) params.with_cast = withCast;
+    if (withCrew) params.with_crew = withCrew;
 
+    const tmdbData = await tmdb("/discover/movie", params);
+    let results = tmdbData.results || [];
+
+    // /discover can't honor free text, so when a person filter is combined with a
+    // title query, match the title server-side on the person-filtered page.
+    if (q && (withCast || withCrew)) {
+      const needle = q.toLowerCase();
+      results = results.filter((m) => String(m.title || "").toLowerCase().includes(needle));
+    }
+
+    return results;
+  };
+
+  // cacheEmpty:!q — a free-text search can transiently filter a page down to zero,
+  // so don't freeze that empty; a no-query /discover page's empty is stable.
+  const data = await movieCache.getFeed(keyParams, fetchFromTmdb, { cacheEmpty: !q });
   res.json({ ok: true, data });
 }
 
@@ -182,23 +210,19 @@ async function random(req, res) {
   res.json({ ok: true, data: movie });
 }
 
-// GET /api/movies/:id — full details for one movie, used by the Movie Details
-// page. One TMDB call with credits + videos appended, trimmed to what the page
-// renders: overview, genres, director, top cast, and a YouTube trailer key.
-// Registered AFTER /api/movies/search and /api/movies/random so those literal
-// paths aren't swallowed by the :id param.
-async function details(req, res) {
-  const id = Math.trunc(Number(req.params.id));
-  if (!Number.isFinite(id) || id <= 0) {
-    const err = new Error("Invalid movie id");
-    err.status = 400;
-    throw err;
-  }
+// GET /api/movies/cache-stats — read-only visibility into both cache tiers for
+// dev/QA: how many movies are cached (detailed vs feed-only), how many feed pages
+// are live, and the oldest/newest feedcache entry + when the oldest is due to be
+// TTL-swept. Registered before /:id so the literal path isn't swallowed by the param.
+async function cacheStats(req, res) {
+  res.json({ ok: true, data: await movieCache.getStats() });
+}
 
-  const movie = await tmdb(`/movie/${id}`, {
-    append_to_response: "credits,videos",
-  });
-
+// Build the Movie Details payload from a raw TMDB /movie/:id response (with
+// credits + videos appended). Trimmed to what the page renders: overview, genres,
+// director, top cast, and a YouTube trailer key. Shared shape with the cached
+// detail (movieCache.docToDetail) so served-from-Mongo details are identical.
+function buildDetailPayload(movie) {
   const crew = (movie.credits && movie.credits.crew) || [];
   const director = crew.find((c) => c.job === "Director");
 
@@ -208,30 +232,57 @@ async function details(req, res) {
     videos.find((v) => v.site === "YouTube" && v.type === "Trailer") ||
     videos.find((v) => v.site === "YouTube");
 
-  res.json({
-    ok: true,
-    data: {
-      id: movie.id,
-      title: movie.title || movie.original_title || "",
-      release_date: movie.release_date || "",
-      overview: movie.overview || "",
-      tagline: movie.tagline || "",
-      runtime: movie.runtime || null,
-      vote_average: movie.vote_average || 0,
-      poster_path: movie.poster_path || null,
-      backdrop_path: movie.backdrop_path || null,
-      genres: (movie.genres || []).map((g) => g.name),
-      director: director ? director.name : "",
-      cast: ((movie.credits && movie.credits.cast) || [])
-        .slice(0, 4)
-        .map((c) => c.name),
-      trailerKey: trailer ? trailer.key : null,
-    },
+  return {
+    id: movie.id,
+    title: movie.title || movie.original_title || "",
+    release_date: movie.release_date || "",
+    overview: movie.overview || "",
+    tagline: movie.tagline || "",
+    runtime: movie.runtime || null,
+    vote_average: movie.vote_average || 0,
+    poster_path: movie.poster_path || null,
+    backdrop_path: movie.backdrop_path || null,
+    genres: (movie.genres || []).map((g) => g.name),
+    director: director ? director.name : "",
+    cast: ((movie.credits && movie.credits.cast) || [])
+      .slice(0, 4)
+      .map((c) => c.name),
+    trailerKey: trailer ? trailer.key : null,
+  };
+}
+
+// GET /api/movies/:id — full details for one movie, used by the Movie Details
+// page. Cache-first: a fully-detailed `movies` doc is served straight from Mongo
+// (no TMDB call). On a miss or a feed-only (partial) doc, fetch from TMDB with
+// credits + videos appended, return it, and persist with fullDetails:true so the
+// next view is served from cache. Registered AFTER /api/movies/search and
+// /api/movies/random so those literal paths aren't swallowed by the :id param.
+async function details(req, res) {
+  const id = Math.trunc(Number(req.params.id));
+  if (!Number.isFinite(id) || id <= 0) {
+    const err = new Error("Invalid movie id");
+    err.status = 400;
+    throw err;
+  }
+
+  // Served from Mongo when we already have the full detail fields.
+  const cached = await movieCache.getCachedDetail(id);
+  if (cached) return res.json({ ok: true, data: cached });
+
+  const movie = await tmdb(`/movie/${id}`, {
+    append_to_response: "credits,videos",
   });
+  const payload = buildDetailPayload(movie);
+
+  // Persist the full detail (best-effort; flips fullDetails:true for next time).
+  await movieCache.saveDetail(id, movie, payload);
+
+  res.json({ ok: true, data: payload });
 }
 
 module.exports = {
   search,
   random,
+  cacheStats,
   details,
 };

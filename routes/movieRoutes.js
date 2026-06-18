@@ -10,6 +10,7 @@ const router = express.Router();
 // swallowed by the :id param.
 router.get("/api/movies/search", route(movies.search));
 router.get("/api/movies/random", route(movies.random));
+router.get("/api/movies/cache-stats", route(movies.cacheStats));
 router.get("/api/movies/:id", route(movies.details));
 
 module.exports = router;
