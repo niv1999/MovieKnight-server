@@ -28,12 +28,25 @@ Collection items + the saved wheel are **embedded** inside the collection docume
 | backdropPath | String | |
 | overview | String | |
 | rating | Number | TMDB vote average |
+| tagline | String | detail-only (not returned by list endpoints) |
+| runtime | Number | detail-only, minutes |
 | director | String | |
 | cast | [String] | |
-| genres | [String] | |
+| genres | [String] | names; only filled by the details fetch |
 | trailerKey | String | YouTube key |
 | popularity | Number | |
-| lastUpdated | Date | |
+| fullDetails | Boolean | `false` when first seen via a list endpoint (`/discover`, `/search`), which omit credits/videos; the details route fills the rest and flips it `true`. Once `true`, the details page is served from Mongo. Default `false`. |
+| lastUpdated | Date | refreshed on every write (lazy freshness for the volatile numbers) |
+
+## `feedcache` (search/feed cache — TTL'd ordering)
+The movie *content* lives in `movies` (kept ~forever); this collection caches only the *ordering* of a query, which goes stale as popularity/rating drift. One document per distinct query+page.
+| Field | Type | Notes |
+|---|---|---|
+| _id | String | canonical fingerprint of the request (filters + sort + page) — see `services/movieCache.feedKey` |
+| movieIds | [Number] | **ordered** TMDB ids the query returned (→ `movies._id`); the sort is re-imposed from this on read |
+| fetchedAt | Date | write time; a **TTL index** (`expireAfterSeconds: 12h`) lets Mongo auto-delete the entry — an absent doc reads as a cache miss |
+
+**Flow:** `GET /api/movies/search` checks `feedcache` first; on a hit it loads the `movieIds` from `movies` (re-ordered) — no TMDB call. On a miss it fetches TMDB, upserts each movie into `movies` (refreshing the volatile numbers), and records the ordered id list here. The whole layer is best-effort: with no/unreachable Mongo it transparently falls back to a direct TMDB fetch (see `services/movieCache.js`).
 
 ## `collections`
 | Field | Type | Notes |
