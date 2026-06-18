@@ -385,6 +385,71 @@
       ]
     },
     {
+      "name": "Users",
+      "description": "Current-user profile updates. Bearer required. Envelope { ok, data }.",
+      "item": [
+        {
+          "name": "Update my profile (bio / name / avatar)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bio\": \"Cinephile. Spins the wheel nightly.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "me"]
+            },
+            "description": "Update the signed-in user's own profile. Whitelist: bio, name, avatarUrl, countryCode (never email/username/password). bio is trimmed, <= 280 chars. avatarUrl must be an image data URL (data:image/...;base64,...) or an http(s) URL. Returns the updated safe user. 400 on empty/invalid body, 401 without a valid Bearer token."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{token}}" }
+                ],
+                "body": { "mode": "raw", "raw": "{\n  \"bio\": \"Cinephile. Spins the wheel nightly.\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{baseUrl}}/api/users/me", "host": ["{{baseUrl}}"], "path": ["api", "users", "me"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"user\": {\n      \"id\": \"6a34...\",\n      \"username\": \"ada\",\n      \"email\": \"ada@example.com\",\n      \"name\": \"Ada Lovelace\",\n      \"bio\": \"Cinephile. Spins the wheel nightly.\",\n      \"avatarUrl\": null\n    }\n  }\n}"
+            },
+            {
+              "name": "400 Invalid avatar",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{token}}" }
+                ],
+                "body": { "mode": "raw", "raw": "{\n  \"avatarUrl\": \"notanimage\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{baseUrl}}/api/users/me", "host": ["{{baseUrl}}"], "path": ["api", "users", "me"] }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"avatarUrl must be an image data URL or http(s) URL\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Movies (TMDB-backed)",
       "description": "Read-only TMDB proxy under /api. External API = TMDB. Envelope { ok, data }.",
       "item": [
