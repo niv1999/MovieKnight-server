@@ -51,12 +51,18 @@ function parseReleaseDate(s) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+// Extract the numeric release year from TMDB's "YYYY-MM-DD", or null when the
+// string is absent or its leading 4 chars don't parse to a truthy number.
+function releaseYearFromDate(s) {
+  return s ? Number(String(s).slice(0, 4)) || null : null;
+}
+
 // A raw TMDB *list* result -> the feed-level fields we persist. BARE image paths;
 // NO detail-only fields and NO fullDetails (those are owned by saveDetail).
 function feedFields(r) {
   return {
     title: r.title || r.original_title || "",
-    releaseYear: r.release_date ? Number(String(r.release_date).slice(0, 4)) || null : null,
+    releaseYear: releaseYearFromDate(r.release_date),
     releaseDate: parseReleaseDate(r.release_date),
     posterPath: r.poster_path || null,
     backdropPath: r.backdrop_path || null,
@@ -237,9 +243,7 @@ async function saveDetail(id, movie, payload) {
       {
         $set: {
           title: payload.title,
-          releaseYear: movie.release_date
-            ? Number(String(movie.release_date).slice(0, 4)) || null
-            : null,
+          releaseYear: releaseYearFromDate(movie.release_date),
           releaseDate: parseReleaseDate(movie.release_date),
           posterPath: payload.poster_path,
           backdropPath: payload.backdrop_path,
