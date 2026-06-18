@@ -29,8 +29,10 @@ app.use(
   })
 );
 
-// Parse JSON request bodies (auth/collections POST + PUT). Harmless for GET routes.
-app.use(express.json());
+// Parse JSON request bodies (auth/collections POST + PUT). The 2mb limit leaves
+// room for a small base64 avatar data URL on PATCH /api/users/me (client resizes
+// to ~256px first, so real payloads are tiny — this is just headroom).
+app.use(express.json({ limit: "2mb" }));
 
 // --- health check ---
 app.get("/", (req, res) => {

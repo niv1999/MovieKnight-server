@@ -27,7 +27,25 @@ async function updateMe(req, res, next) {
       updates.bio = bio;
     }
     if (body.name !== undefined) updates.name = String(body.name).trim();
-    if (body.avatarUrl !== undefined) updates.avatarUrl = String(body.avatarUrl).trim();
+    if (body.avatarUrl !== undefined) {
+      const a = String(body.avatarUrl).trim();
+      // Accept an empty string (clears it), an image data URL, or an http(s) URL.
+      if (
+        a &&
+        !/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(a) &&
+        !/^https?:\/\//i.test(a)
+      ) {
+        return res
+          .status(400)
+          .json({ ok: false, error: "avatarUrl must be an image data URL or http(s) URL" });
+      }
+      if (a.length > 1_500_000) {
+        return res
+          .status(400)
+          .json({ ok: false, error: "Avatar image is too large — please use a smaller picture" });
+      }
+      updates.avatarUrl = a;
+    }
     if (body.countryCode !== undefined) {
       updates.countryCode = String(body.countryCode).trim();
     }
