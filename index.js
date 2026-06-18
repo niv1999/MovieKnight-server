@@ -222,9 +222,18 @@ const SEARCH_SOURCE_PAGES = 5; // TMDB pages pulled before sorting (caps the sor
 // Source feed for search. Cast/crew filtering only exists on /discover (TMDB's
 // /search/movie ignores it), so any person filter forces the discover endpoint;
 // otherwise a `q` uses text search and a bare request uses the popular catalog.
-const searchSource = (q, page, { withCast, withCrew } = {}) => {
+// Quality-control filters (minVotes -> vote_count.gte, language ->
+// with_original_language) are TMDB-native and so are pushed into every /discover
+// call; the /search/movie path can't honor them, so the handler also applies
+// them server-side (see below).
+const searchSource = (q, page, { withCast, withCrew, minVotes, language } = {}) => {
+  // Discover-only filters that TMDB applies natively on the catalog feed.
+  const discoverFilters = {};
+  if (minVotes !== null && minVotes !== undefined) discoverFilters["vote_count.gte"] = minVotes;
+  if (language) discoverFilters.with_original_language = language;
+
   if (withCast || withCrew) {
-    const params = { include_adult: "false", sort_by: "popularity.desc", page };
+    const params = { include_adult: "false", sort_by: "popularity.desc", page, ...discoverFilters };
     if (withCast) params.with_cast = withCast;
     if (withCrew) params.with_crew = withCrew;
     return tmdb("/discover/movie", params);
@@ -232,7 +241,12 @@ const searchSource = (q, page, { withCast, withCrew } = {}) => {
   if (q) {
     return tmdb("/search/movie", { query: q, include_adult: "false", page });
   }
-  return tmdb("/discover/movie", { include_adult: "false", sort_by: "popularity.desc", page });
+  return tmdb("/discover/movie", {
+    include_adult: "false",
+    sort_by: "popularity.desc",
+    page,
+    ...discoverFilters,
+  });
 };
 
 // GET /api/movies/search — text search with server-side filtering, sorting, and
@@ -249,9 +263,11 @@ app.get(
     const yearFrom = req.query.yearFrom ? Number(req.query.yearFrom) : null;
     const yearTo = req.query.yearTo ? Number(req.query.yearTo) : null;
     const minRating = req.query.minRating ? Number(req.query.minRating) : null;
+    const minVotes = req.query.minVotes ? Number(req.query.minVotes) : null;
+    const language = req.query.language ? String(req.query.language).trim() : null;
     const withCast = req.query.with_cast ? String(req.query.with_cast) : null;
     const withCrew = req.query.with_crew ? String(req.query.with_crew) : null;
-    const filters = { withCast, withCrew };
+    const filters = { withCast, withCrew, minVotes, language };
 
     // Pull a capped window so the sort spans more than a single TMDB page.
     const first = await searchSource(q, 1, filters);
@@ -289,6 +305,15 @@ app.get(
     if (minRating !== null) {
       results = results.filter((m) => (m.vote_average || 0) >= minRating);
     }
+    // Quality-control filters. /discover honors these natively (passed through
+    // searchSource); re-apply server-side so the /search/movie text path, which
+    // ignores them, stays consistent.
+    if (minVotes !== null) {
+      results = results.filter((m) => (m.vote_count || 0) >= minVotes);
+    }
+    if (language !== null) {
+      results = results.filter((m) => m.original_language === language);
+    }
 
     // Server-side sort, then paginate the ordered list.
     results.sort(SORTERS[sort]);
@@ -305,6 +330,57 @@ app.get(
   route(async (req, res) => {
     const { movie } = await pickRandomMovie();
     res.json({ ok: true, data: movie });
+  })
+);
+
+// GET /api/movies/:id — full details for one movie, used by the Movie Details
+// page. One TMDB call with credits + videos appended, trimmed to what the page
+// renders: overview, genres, director, top cast, and a YouTube trailer key.
+// Registered AFTER /api/movies/search and /api/movies/random so those literal
+// paths aren't swallowed by the :id param.
+app.get(
+  "/api/movies/:id",
+  route(async (req, res) => {
+    const id = Math.trunc(Number(req.params.id));
+    if (!Number.isFinite(id) || id <= 0) {
+      const err = new Error("Invalid movie id");
+      err.status = 400;
+      throw err;
+    }
+
+    const movie = await tmdb(`/movie/${id}`, {
+      append_to_response: "credits,videos",
+    });
+
+    const crew = (movie.credits && movie.credits.crew) || [];
+    const director = crew.find((c) => c.job === "Director");
+
+    const videos = (movie.videos && movie.videos.results) || [];
+    // Prefer an official YouTube "Trailer"; fall back to any YouTube clip.
+    const trailer =
+      videos.find((v) => v.site === "YouTube" && v.type === "Trailer") ||
+      videos.find((v) => v.site === "YouTube");
+
+    res.json({
+      ok: true,
+      data: {
+        id: movie.id,
+        title: movie.title || movie.original_title || "",
+        release_date: movie.release_date || "",
+        overview: movie.overview || "",
+        tagline: movie.tagline || "",
+        runtime: movie.runtime || null,
+        vote_average: movie.vote_average || 0,
+        poster_path: movie.poster_path || null,
+        backdrop_path: movie.backdrop_path || null,
+        genres: (movie.genres || []).map((g) => g.name),
+        director: director ? director.name : "",
+        cast: ((movie.credits && movie.credits.cast) || [])
+          .slice(0, 4)
+          .map((c) => c.name),
+        trailerKey: trailer ? trailer.key : null,
+      },
+    });
   })
 );
 

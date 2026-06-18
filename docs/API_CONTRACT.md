@@ -20,7 +20,7 @@ Signup also seeds the 3 default collections (Favorites, Already Watched, Watchli
 ## Movies (TMDB-backed, cached)
 | Method | Path | Query / Params | Returns | Status |
 |---|---|---|---|---|
-| GET | `/api/movies/search` | `q, genre, yearFrom, yearTo, minRating, with_cast, with_crew, sort, page` | `{ ok:true, data:[movie] }` | ✅ implemented |
+| GET | `/api/movies/search` | `q, genre, yearFrom, yearTo, minRating, minVotes, language, with_cast, with_crew, sort, page` | `{ ok:true, data:[movie] }` | ✅ implemented |
 | GET | `/api/movies/random` | — | `{ ok:true, data:{movie} }` | ✅ implemented |
 | GET | `/api/people/search` | `q` | `{ ok:true, data:[{id,name,profile_path,known_for_department}] }` | ✅ implemented |
 | GET | `/api/people/popular` | `page` | `{ ok:true, data:[{id,name,profile_path,known_for_department}] }` — pre-fills actor/director dropdowns; filtered to mostly-English `known_for` (US/Hollywood bias) | ✅ implemented |
@@ -31,7 +31,8 @@ Signup also seeds the 3 default collections (Favorites, Already Watched, Watchli
 `search` = **complex query #1** (combined filters + sort).
 
 ### `GET /api/movies/search`
-- **Params:** `q` (title text; **empty/omitted → popular movies feed**) · `genre` (TMDB genre id) · `yearFrom` / `yearTo` (4-digit, inclusive release-year range; either bound is optional) · `minRating` (0–10 floor) · `with_cast` (actor person id) · `with_crew` (director person id) · `sort` · `page` (default 1).
+- **Params:** `q` (title text; **empty/omitted → popular movies feed**) · `genre` (TMDB genre id) · `yearFrom` / `yearTo` (4-digit, inclusive release-year range; either bound is optional) · `minRating` (0–10 floor) · `minVotes` (optional; minimum TMDB vote count → `vote_count.gte`; quality floor that keeps obscure, barely-rated titles out of the feed) · `language` (optional; ISO 639-1 code, e.g. `en` → `with_original_language`; restricts to a single original language) · `with_cast` (actor person id) · `with_crew` (director person id) · `sort` · `page` (default 1).
+- **Quality-control filters:** `minVotes` and `language` are TMDB-native and are pushed straight through to `/discover/movie` (which powers the default feed and any filtered view). On the free-text path (`q` with no person filter, which uses `/search/movie` and can't honor them), the server re-applies both on the results so behavior is identical either way.
 - **Person filters:** `with_cast` / `with_crew` route the query through TMDB `/discover` (which is the only endpoint that supports them). Because `/discover` can't honor free text, when `q` is also supplied the title match is applied server-side on top of the person-filtered results.
 - **`sort`** (server-side, applied before pagination) — allowable values: `popularity` *(default)*, `rating_desc`, `rating_asc`, `title_asc`, `title_desc`, `year_desc`, `year_asc`. Unknown/missing → `popularity`. Undated titles always sort to the bottom on `year_asc`/`year_desc`, and are excluded when a `yearFrom`/`yearTo` range is set.
 - **Pagination:** 20 movies per page via `page`. Sorting/filtering run over a capped window of ~100 source results (first 5 TMDB pages), so the order is global across that window, not per-TMDB-page.
