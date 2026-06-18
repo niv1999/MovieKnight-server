@@ -184,53 +184,6 @@ app.get(
   })
 );
 
-// 4. GET /people/search?query=<text> — search TMDB people (actors/directors) for
-//    the frontend filters. Returns a trimmed list; empty query -> empty list.
-//    `known_for_department` ("Acting" / "Directing") helps the UI tell them apart.
-app.get(
-  "/people/search",
-  route(async (req, res) => {
-    const query = (req.query.query || "").trim();
-    if (!query) {
-      return res.json({ people: [] });
-    }
-    const data = await tmdb("/search/person", { query, include_adult: "false" });
-    const people = (data.results || []).map((p) => ({
-      id: p.id,
-      name: p.name,
-      profile_path: p.profile_path,
-      known_for_department: p.known_for_department,
-    }));
-    res.json({ people });
-  })
-);
-
-// 5. GET /genres — movie genre list. TMDB returns { genres: [{ id, name }] }.
-app.get(
-  "/genres",
-  route(async (req, res) => {
-    const data = await tmdb("/genre/movie/list");
-    res.json({ genres: data.genres });
-  })
-);
-
-// 6. GET /providers — US watch/streaming providers. TMDB items include a large
-//    per-country `display_priorities` map; trim to the fields the frontend uses
-//    and keep `provider_id` (needed to filter via with_watch_providers).
-app.get(
-  "/providers",
-  route(async (req, res) => {
-    const data = await tmdb("/watch/providers/movie", { watch_region: "US" });
-    const providers = (data.results || []).map((p) => ({
-      provider_id: p.provider_id,
-      provider_name: p.provider_name,
-      logo_path: p.logo_path,
-      display_priority: p.display_priority,
-    }));
-    res.json({ providers });
-  })
-);
-
 // ===========================================================================
 // /api contract endpoints — standard envelope { ok:true, data } / { ok:false, error }
 // These follow the official API contract (/api prefix). The prefix-less proxy
@@ -266,15 +219,26 @@ const SORTERS = {
 const SEARCH_PAGE_SIZE = 20; // movies returned per response page
 const SEARCH_SOURCE_PAGES = 5; // TMDB pages pulled before sorting (caps the sort window at ~100)
 
-// Source feed for search: TMDB text search when `q` is set, else the discover catalog.
-const searchSource = (q, page) =>
-  q
-    ? tmdb("/search/movie", { query: q, include_adult: "false", page })
-    : tmdb("/discover/movie", { include_adult: "false", sort_by: "popularity.desc", page });
+// Source feed for search. Cast/crew filtering only exists on /discover (TMDB's
+// /search/movie ignores it), so any person filter forces the discover endpoint;
+// otherwise a `q` uses text search and a bare request uses the popular catalog.
+const searchSource = (q, page, { withCast, withCrew } = {}) => {
+  if (withCast || withCrew) {
+    const params = { include_adult: "false", sort_by: "popularity.desc", page };
+    if (withCast) params.with_cast = withCast;
+    if (withCrew) params.with_crew = withCrew;
+    return tmdb("/discover/movie", params);
+  }
+  if (q) {
+    return tmdb("/search/movie", { query: q, include_adult: "false", page });
+  }
+  return tmdb("/discover/movie", { include_adult: "false", sort_by: "popularity.desc", page });
+};
 
 // GET /api/movies/search — text search with server-side filtering, sorting, and
-// pagination. Params: q, genre, year, minRating, sort (default popularity), page.
-// Sorting is global across a capped window of source results (not just one TMDB page).
+// pagination. Params: q, genre, yearFrom, yearTo, minRating, with_cast, with_crew,
+// sort (default popularity), page. Empty q -> popular movies feed. Sorting is
+// global across a capped window of source results (not just one TMDB page).
 app.get(
   "/api/movies/search",
   route(async (req, res) => {
@@ -282,26 +246,45 @@ app.get(
     const sort = SORTERS[req.query.sort] ? req.query.sort : DEFAULT_SORT;
     const page = clampPage(req.query.page);
     const genre = req.query.genre ? Number(req.query.genre) : null;
-    const year = req.query.year ? String(req.query.year) : null;
+    const yearFrom = req.query.yearFrom ? Number(req.query.yearFrom) : null;
+    const yearTo = req.query.yearTo ? Number(req.query.yearTo) : null;
     const minRating = req.query.minRating ? Number(req.query.minRating) : null;
+    const withCast = req.query.with_cast ? String(req.query.with_cast) : null;
+    const withCrew = req.query.with_crew ? String(req.query.with_crew) : null;
+    const filters = { withCast, withCrew };
 
     // Pull a capped window so the sort spans more than a single TMDB page.
-    const first = await searchSource(q, 1);
+    const first = await searchSource(q, 1, filters);
     const sourcePages = Math.min(SEARCH_SOURCE_PAGES, first.total_pages || 1);
     let results = first.results || [];
     if (sourcePages > 1) {
       const rest = await Promise.all(
-        Array.from({ length: sourcePages - 1 }, (_, i) => searchSource(q, i + 2))
+        Array.from({ length: sourcePages - 1 }, (_, i) => searchSource(q, i + 2, filters))
       );
       for (const r of rest) results = results.concat(r.results || []);
+    }
+
+    // A person filter forces the discover endpoint, which can't honor free text,
+    // so match the title query client-side when both are supplied.
+    if ((withCast || withCrew) && q) {
+      const needle = q.toLowerCase();
+      results = results.filter((m) =>
+        String(m.title || "").toLowerCase().includes(needle)
+      );
     }
 
     // Server-side filtering.
     if (genre !== null) {
       results = results.filter((m) => (m.genre_ids || []).includes(genre));
     }
-    if (year !== null) {
-      results = results.filter((m) => String(m.release_date || "").startsWith(year));
+    if (yearFrom !== null || yearTo !== null) {
+      results = results.filter((m) => {
+        const y = releaseYear(m);
+        if (y === null) return false; // undated titles excluded when a year range is set
+        if (yearFrom !== null && y < yearFrom) return false;
+        if (yearTo !== null && y > yearTo) return false;
+        return true;
+      });
     }
     if (minRating !== null) {
       results = results.filter((m) => (m.vote_average || 0) >= minRating);
@@ -322,6 +305,88 @@ app.get(
   route(async (req, res) => {
     const { movie } = await pickRandomMovie();
     res.json({ ok: true, data: movie });
+  })
+);
+
+// GET /api/genres — movie genre list. data = [{ id, name }].
+app.get(
+  "/api/genres",
+  route(async (req, res) => {
+    const data = await tmdb("/genre/movie/list");
+    res.json({ ok: true, data: data.genres || [] });
+  })
+);
+
+// GET /api/providers — US watch/streaming providers. TMDB items include a large
+// per-country `display_priorities` map; trim to the fields the frontend uses and
+// keep `provider_id` (needed to filter via with_watch_providers).
+app.get(
+  "/api/providers",
+  route(async (req, res) => {
+    const tmdbData = await tmdb("/watch/providers/movie", { watch_region: "US" });
+    const data = (tmdbData.results || []).map((p) => ({
+      provider_id: p.provider_id,
+      provider_name: p.provider_name,
+      logo_path: p.logo_path,
+      display_priority: p.display_priority,
+    }));
+    res.json({ ok: true, data });
+  })
+);
+
+// Trim a TMDB person to the shape both people routes return.
+const mapPerson = (p) => ({
+  id: p.id,
+  name: p.name,
+  profile_path: p.profile_path,
+  known_for_department: p.known_for_department,
+});
+
+// GET /api/people/search?q=<text> — search TMDB people (actors/directors) for the
+// filters. Accepts `q` (or legacy `query`). `known_for_department` ("Acting" /
+// "Directing") helps the UI tell them apart. Empty query -> data: [].
+app.get(
+  "/api/people/search",
+  route(async (req, res) => {
+    const query = String(req.query.q || req.query.query || "").trim();
+    if (!query) {
+      return res.json({ ok: true, data: [] });
+    }
+    const tmdbData = await tmdb("/search/person", { query, include_adult: "false" });
+    res.json({ ok: true, data: (tmdbData.results || []).map(mapPerson) });
+  })
+);
+
+// TMDB's /person/popular is global (and `language=` only translates fields — it
+// doesn't regionalize the ranking, and there's no region param). To bias toward
+// US/Hollywood names we keep people whose `known_for` titles are mostly English.
+const PEOPLE_POPULAR_SOURCE_PAGES = 3; // pulled per response so ~20 remain after filtering
+const isMostlyEnglish = (p) => {
+  const langs = (p.known_for || []).map((k) => k.original_language).filter(Boolean);
+  if (langs.length === 0) return false;
+  const english = langs.filter((l) => l === "en").length;
+  return english / langs.length >= 0.5;
+};
+
+// GET /api/people/popular — popular (English-biased) people to pre-fill the
+// actor/director dropdowns before the user types. Same item shape as
+// /api/people/search. Accepts ?page.
+app.get(
+  "/api/people/popular",
+  route(async (req, res) => {
+    const page = clampPage(req.query.page);
+    // Pull a window of source pages so enough English-known people survive the filter.
+    const startPage = (page - 1) * PEOPLE_POPULAR_SOURCE_PAGES + 1;
+    const pages = await Promise.all(
+      Array.from({ length: PEOPLE_POPULAR_SOURCE_PAGES }, (_, i) =>
+        tmdb("/person/popular", { page: startPage + i })
+      )
+    );
+
+    let people = [];
+    for (const pg of pages) people = people.concat(pg.results || []);
+    const data = people.filter(isMostlyEnglish).slice(0, 20).map(mapPerson);
+    res.json({ ok: true, data });
   })
 );
 

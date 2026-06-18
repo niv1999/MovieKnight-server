@@ -20,15 +20,20 @@ Signup also seeds the 3 default collections (Favorites, Already Watched, Watchli
 ## Movies (TMDB-backed, cached)
 | Method | Path | Query / Params | Returns | Status |
 |---|---|---|---|---|
-| GET | `/api/movies/search` | `q, genre, year, minRating, sort, page` | `{ ok:true, data:[movie] }` | ✅ implemented |
+| GET | `/api/movies/search` | `q, genre, yearFrom, yearTo, minRating, with_cast, with_crew, sort, page` | `{ ok:true, data:[movie] }` | ✅ implemented |
 | GET | `/api/movies/random` | — | `{ ok:true, data:{movie} }` | ✅ implemented |
+| GET | `/api/people/search` | `q` | `{ ok:true, data:[{id,name,profile_path,known_for_department}] }` | ✅ implemented |
+| GET | `/api/people/popular` | `page` | `{ ok:true, data:[{id,name,profile_path,known_for_department}] }` — pre-fills actor/director dropdowns; filtered to mostly-English `known_for` (US/Hollywood bias) | ✅ implemented |
+| GET | `/api/genres` | — | `{ ok:true, data:[{id,name}] }` | ✅ implemented |
+| GET | `/api/providers` | — | `{ ok:true, data:[{provider_id,provider_name,logo_path,display_priority}] }` | ✅ implemented |
 | GET | `/api/movies/:tmdbId` | `tmdbId` | `{ ok:true, data:{movie detail} }` | ⛔ not yet |
 
 `search` = **complex query #1** (combined filters + sort).
 
 ### `GET /api/movies/search`
-- **Params:** `q` (title text; omit for the popular catalog) · `genre` (TMDB genre id) · `year` (4-digit) · `minRating` (0–10 floor) · `sort` · `page` (default 1).
-- **`sort`** (server-side, applied before pagination) — allowable values: `popularity` *(default)*, `rating_desc`, `rating_asc`, `title_asc`, `title_desc`, `year_desc`, `year_asc`. Unknown/missing → `popularity`.
+- **Params:** `q` (title text; **empty/omitted → popular movies feed**) · `genre` (TMDB genre id) · `yearFrom` / `yearTo` (4-digit, inclusive release-year range; either bound is optional) · `minRating` (0–10 floor) · `with_cast` (actor person id) · `with_crew` (director person id) · `sort` · `page` (default 1).
+- **Person filters:** `with_cast` / `with_crew` route the query through TMDB `/discover` (which is the only endpoint that supports them). Because `/discover` can't honor free text, when `q` is also supplied the title match is applied server-side on top of the person-filtered results.
+- **`sort`** (server-side, applied before pagination) — allowable values: `popularity` *(default)*, `rating_desc`, `rating_asc`, `title_asc`, `title_desc`, `year_desc`, `year_asc`. Unknown/missing → `popularity`. Undated titles always sort to the bottom on `year_asc`/`year_desc`, and are excluded when a `yearFrom`/`yearTo` range is set.
 - **Pagination:** 20 movies per page via `page`. Sorting/filtering run over a capped window of ~100 source results (first 5 TMDB pages), so the order is global across that window, not per-TMDB-page.
 - **Response:** `{ ok:true, data:[movie] }` — `data` is the ordered, paged array (raw TMDB movie objects for now; field-reshaping to the `DATA_MODEL` shape is a separate, still-open task).
 
@@ -49,12 +54,12 @@ Signup also seeds the 3 default collections (Favorites, Already Watched, Watchli
 | GET | `/movies` | `page` (1–500), `with_genres`, `with_cast`, `with_crew`, `with_watch_providers`, `watch_region`, `primary_release_date.gte`/`.lte`, `vote_average.gte`, `vote_count.gte`, `sort_by` | `{ movies: [...] }` — popular feed when no filters; `/discover` when any filter present |
 | GET | `/movies/random` | — | `{ movie }` — truly-random deep-catalog title via brute-force ID lookup; `{ movie, fallback: true }` if the 20-attempt loop maxes out and falls back to a popular title |
 | GET | `/movies/search` | `query` | `{ movies: [...] }` — TMDB title search; empty `query` → `{ movies: [] }` |
-| GET | `/people/search` | `query` | `{ people: [{ id, name, profile_path, known_for_department }] }` — actors/directors for filters; empty `query` → `{ people: [] }` |
-| GET | `/genres` | — | `{ genres: [{ id, name }] }` |
-| GET | `/providers` | — | `{ providers: [{ provider_id, provider_name, logo_path, display_priority }] }` — US region |
 
-**Filtering by person:** resolve a name via `/people/search`, then pass the chosen `id` to
-`/movies?with_cast=<id>` (actor) or `/movies?with_crew=<id>` (director).
+> **Moved to `/api` (contract `{ ok:true, data:[...] }` envelope, prefix-less paths removed):**
+> `/genres` → `GET /api/genres` · `/providers` → `GET /api/providers` · `/people/search` → `GET /api/people/search`.
+
+**Filtering by person:** resolve a name via `GET /api/people/search`, then pass the chosen `id` to
+`/api/movies/search?with_cast=<id>` (actor) or `/api/movies/search?with_crew=<id>` (director).
 
 > ⚠️ **Duplication note:** `/movies/search` and `/movies/random` (prefix-less, named-payload)
 > now have contract-shaped twins `/api/movies/search` and `/api/movies/random` (see _Movies_
