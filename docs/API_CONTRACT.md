@@ -18,12 +18,22 @@
 Signup also seeds the 3 default collections (Favorites, Already Watched, Watchlist).
 
 ## Movies (TMDB-backed, cached)
-| Method | Path | Query / Params | Returns |
-|---|---|---|---|
-| GET | `/api/movies/search` | `q, genre, year, minRating, sort` | `[movie]` |
-| GET | `/api/movies/:tmdbId` | `tmdbId` | `{movie detail}` |
+| Method | Path | Query / Params | Returns | Status |
+|---|---|---|---|---|
+| GET | `/api/movies/search` | `q, genre, year, minRating, sort, page` | `{ ok:true, data:[movie] }` | ✅ implemented |
+| GET | `/api/movies/random` | — | `{ ok:true, data:{movie} }` | ✅ implemented |
+| GET | `/api/movies/:tmdbId` | `tmdbId` | `{ ok:true, data:{movie detail} }` | ⛔ not yet |
 
 `search` = **complex query #1** (combined filters + sort).
+
+### `GET /api/movies/search`
+- **Params:** `q` (title text; omit for the popular catalog) · `genre` (TMDB genre id) · `year` (4-digit) · `minRating` (0–10 floor) · `sort` · `page` (default 1).
+- **`sort`** (server-side, applied before pagination) — allowable values: `popularity` *(default)*, `rating_desc`, `rating_asc`, `title_asc`, `title_desc`, `year_desc`, `year_asc`. Unknown/missing → `popularity`.
+- **Pagination:** 20 movies per page via `page`. Sorting/filtering run over a capped window of ~100 source results (first 5 TMDB pages), so the order is global across that window, not per-TMDB-page.
+- **Response:** `{ ok:true, data:[movie] }` — `data` is the ordered, paged array (raw TMDB movie objects for now; field-reshaping to the `DATA_MODEL` shape is a separate, still-open task).
+
+### `GET /api/movies/random`
+- Returns one random non-adult movie via brute-force ID lookup. `{ ok:true, data:{movie} }`.
 
 ## TMDB Proxy — IMPLEMENTED (current server)
 
@@ -45,6 +55,11 @@ Signup also seeds the 3 default collections (Favorites, Already Watched, Watchli
 
 **Filtering by person:** resolve a name via `/people/search`, then pass the chosen `id` to
 `/movies?with_cast=<id>` (actor) or `/movies?with_crew=<id>` (director).
+
+> ⚠️ **Duplication note:** `/movies/search` and `/movies/random` (prefix-less, named-payload)
+> now have contract-shaped twins `/api/movies/search` and `/api/movies/random` (see _Movies_
+> above). Both sets are live during migration. Once the frontend moves to the `/api` versions,
+> the prefix-less `/movies/search` and `/movies/random` should be removed.
 
 ## Collections (Bearer)
 | Method | Path | Body | Returns |

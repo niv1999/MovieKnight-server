@@ -5,6 +5,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const connectDB = require("./db_connection");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -124,44 +125,49 @@ app.get(
   })
 );
 
-// 2. GET /movies/random — one truly random (often obscure) movie.
+// Pick one truly random (often obscure), non-adult movie.
 //    TMDB has no native random endpoint, so we brute-force it: pick a random ID,
 //    fetch /movie/{id}, and retry on a 404 (dead ID) or an adult title. To avoid
 //    hanging when we keep hitting dead/adult IDs, we cap attempts and fall back to
 //    a random title from the popular feed (pages 1–500).
+//    Returns { movie, fallback } — fallback is true when the loop maxed out.
 const RANDOM_MAX_ID = 1_200_000; // rough upper bound of TMDB movie IDs
 const RANDOM_MAX_ATTEMPTS = 20; // fail-safe so the loop can't hang the server
+async function pickRandomMovie() {
+  for (let attempt = 0; attempt < RANDOM_MAX_ATTEMPTS; attempt++) {
+    const id = randInt(1, RANDOM_MAX_ID);
+
+    let movie;
+    try {
+      movie = await tmdb(`/movie/${id}`);
+    } catch (err) {
+      if (err.status === 404) continue; // dead ID — try another
+      throw err; // real failure (auth, rate-limit, network) — surface it
+    }
+
+    if (movie.adult === false) {
+      return { movie, fallback: false };
+    }
+    // adult title — discard and keep looking
+  }
+
+  // Fail-safe: the loop maxed out, so return a reliable popular title instead.
+  const popular = await tmdb("/movie/popular", { page: randInt(1, 500) });
+  const results = popular.results || [];
+  if (results.length === 0) {
+    const err = new Error("No fallback movie available");
+    err.status = 502;
+    throw err;
+  }
+  return { movie: results[randInt(0, results.length - 1)], fallback: true };
+}
+
+// 2. GET /movies/random — one random movie (prefix-less proxy shape).
 app.get(
   "/movies/random",
   route(async (req, res) => {
-    for (let attempt = 0; attempt < RANDOM_MAX_ATTEMPTS; attempt++) {
-      const id = randInt(1, RANDOM_MAX_ID);
-
-      let movie;
-      try {
-        movie = await tmdb(`/movie/${id}`);
-      } catch (err) {
-        if (err.status === 404) continue; // dead ID — try another
-        throw err; // real failure (auth, rate-limit, network) — surface it
-      }
-
-      if (movie.adult === false) {
-        return res.json({ movie });
-      }
-      // adult title — discard and keep looking
-    }
-
-    // Fail-safe: the loop maxed out, so return a reliable popular title instead.
-    const page = randInt(1, 500);
-    const popular = await tmdb("/movie/popular", { page });
-    const results = popular.results || [];
-    if (results.length === 0) {
-      const err = new Error("No fallback movie available");
-      err.status = 502;
-      throw err;
-    }
-    const movie = results[randInt(0, results.length - 1)];
-    res.json({ movie, fallback: true });
+    const { movie, fallback } = await pickRandomMovie();
+    res.json(fallback ? { movie, fallback: true } : { movie });
   })
 );
 
@@ -225,8 +231,105 @@ app.get(
   })
 );
 
-// --- 404 ---
+// ===========================================================================
+// /api contract endpoints — standard envelope { ok:true, data } / { ok:false, error }
+// These follow the official API contract (/api prefix). The prefix-less proxy
+// routes above predate the contract and keep their named-payload shape for now.
+// ===========================================================================
+
+// Server-side sort comparators for /api/movies/search. Keys are the allowable
+// `sort` values; default is "popularity".
+const DEFAULT_SORT = "popularity";
+const releaseYear = (m) => {
+  const y = parseInt(String(m.release_date || "").slice(0, 4), 10);
+  return Number.isFinite(y) ? y : null; // null = undated
+};
+// Year comparator that keeps undated titles at the bottom in both directions.
+const byYear = (dir) => (a, b) => {
+  const ya = releaseYear(a);
+  const yb = releaseYear(b);
+  if (ya === null && yb === null) return 0;
+  if (ya === null) return 1; // undated always sinks
+  if (yb === null) return -1;
+  return dir === "asc" ? ya - yb : yb - ya;
+};
+const SORTERS = {
+  popularity: (a, b) => (b.popularity || 0) - (a.popularity || 0),
+  rating_desc: (a, b) => (b.vote_average || 0) - (a.vote_average || 0),
+  rating_asc: (a, b) => (a.vote_average || 0) - (b.vote_average || 0),
+  title_asc: (a, b) => String(a.title || "").localeCompare(String(b.title || "")),
+  title_desc: (a, b) => String(b.title || "").localeCompare(String(a.title || "")),
+  year_desc: byYear("desc"),
+  year_asc: byYear("asc"),
+};
+
+const SEARCH_PAGE_SIZE = 20; // movies returned per response page
+const SEARCH_SOURCE_PAGES = 5; // TMDB pages pulled before sorting (caps the sort window at ~100)
+
+// Source feed for search: TMDB text search when `q` is set, else the discover catalog.
+const searchSource = (q, page) =>
+  q
+    ? tmdb("/search/movie", { query: q, include_adult: "false", page })
+    : tmdb("/discover/movie", { include_adult: "false", sort_by: "popularity.desc", page });
+
+// GET /api/movies/search — text search with server-side filtering, sorting, and
+// pagination. Params: q, genre, year, minRating, sort (default popularity), page.
+// Sorting is global across a capped window of source results (not just one TMDB page).
+app.get(
+  "/api/movies/search",
+  route(async (req, res) => {
+    const q = String(req.query.q || "").trim();
+    const sort = SORTERS[req.query.sort] ? req.query.sort : DEFAULT_SORT;
+    const page = clampPage(req.query.page);
+    const genre = req.query.genre ? Number(req.query.genre) : null;
+    const year = req.query.year ? String(req.query.year) : null;
+    const minRating = req.query.minRating ? Number(req.query.minRating) : null;
+
+    // Pull a capped window so the sort spans more than a single TMDB page.
+    const first = await searchSource(q, 1);
+    const sourcePages = Math.min(SEARCH_SOURCE_PAGES, first.total_pages || 1);
+    let results = first.results || [];
+    if (sourcePages > 1) {
+      const rest = await Promise.all(
+        Array.from({ length: sourcePages - 1 }, (_, i) => searchSource(q, i + 2))
+      );
+      for (const r of rest) results = results.concat(r.results || []);
+    }
+
+    // Server-side filtering.
+    if (genre !== null) {
+      results = results.filter((m) => (m.genre_ids || []).includes(genre));
+    }
+    if (year !== null) {
+      results = results.filter((m) => String(m.release_date || "").startsWith(year));
+    }
+    if (minRating !== null) {
+      results = results.filter((m) => (m.vote_average || 0) >= minRating);
+    }
+
+    // Server-side sort, then paginate the ordered list.
+    results.sort(SORTERS[sort]);
+    const start = (page - 1) * SEARCH_PAGE_SIZE;
+    const data = results.slice(start, start + SEARCH_PAGE_SIZE);
+
+    res.json({ ok: true, data });
+  })
+);
+
+// GET /api/movies/random — one random movie, contract envelope.
+app.get(
+  "/api/movies/random",
+  route(async (req, res) => {
+    const { movie } = await pickRandomMovie();
+    res.json({ ok: true, data: movie });
+  })
+);
+
+// --- 404: contract envelope under /api, named-payload shape elsewhere ---
 app.use((req, res) => {
+  if (req.path.startsWith("/api/")) {
+    return res.status(404).json({ ok: false, error: "Not found" });
+  }
   res.status(404).json({ error: "Not found" });
 });
 
@@ -234,7 +337,17 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   const status = err.status || 500;
   if (status >= 500) console.error(err);
-  res.status(status).json({ error: err.message || "Server error" });
+  const message = err.message || "Server error";
+  if (req.path.startsWith("/api/")) {
+    return res.status(status).json({ ok: false, error: message });
+  }
+  res.status(status).json({ error: message });
+});
+
+// Open the MongoDB connection on startup. Non-fatal: the TMDB proxy still serves
+// even if the database is unreachable (controllers aren't wired to it yet).
+connectDB().catch((err) => {
+  console.error("⚠️  MongoDB connection failed:", err.message);
 });
 
 app.listen(PORT, () => {
