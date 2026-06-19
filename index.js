@@ -66,10 +66,12 @@ app.get("/", (req, res) => {
 });
 
 // --- API routes (controllers + routes, the taught layout) ---
-// Mounted at the root; each router declares its own full paths.
-app.use(movieRoutes); //   /movies (legacy) + /api/movies/*
-app.use(peopleRoutes); //  /api/people/*
-app.use(catalogRoutes); // /api/genres, /api/providers
+// Every router is mounted under an explicit /api prefix here; the route files
+// declare paths relative to that prefix (e.g. "/providers", not "/api/providers")
+// so the prefix lives in exactly one place.
+app.use("/api", movieRoutes); //   /api/movies/*
+app.use("/api", peopleRoutes); //  /api/people/*
+app.use("/api", catalogRoutes); // /api/genres, /api/providers
 app.use("/api/auth", authRoutes); //  /api/auth/signup, /login, /me
 app.use("/api/users", userRoutes); // /api/users/me (PATCH profile)
 
