@@ -18,12 +18,38 @@ const userRoutes = require("./routes/userRoutes");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- CORS: allow any origin. GET for the proxy reads; POST/PUT/PATCH/DELETE for
-//     the auth + (upcoming) collections CRUD routes. Authorization carries the
-//     Bearer token; Content-Type is needed for JSON request bodies. ---
+// --- CORS: restrict to known frontends. The production site (apex + www) plus
+//     local dev origins. We use Bearer tokens in the Authorization header (not
+//     cookies), so credentials stay off and a strict origin allowlist is enough.
+//     Override/extend in any environment via CORS_ORIGINS (comma-separated).
+//     GET for the proxy reads; POST/PUT/PATCH/DELETE for auth + collections CRUD. ---
+const DEFAULT_ALLOWED_ORIGINS = [
+  "https://movieknight.site",
+  "https://www.movieknight.site",
+  // Local dev: VS Code Live Server, basic static server / UI test script (:8000),
+  // and the API port itself. Both localhost + 127.0.0.1 since either may resolve.
+  "http://localhost:5500",
+  "http://127.0.0.1:5500",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:8000",
+  "http://127.0.0.1:8000",
+];
+
+const allowedOrigins = new Set(
+  (process.env.CORS_ORIGINS
+    ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
+    : DEFAULT_ALLOWED_ORIGINS)
+);
+
 app.use(
   cors({
-    origin: "*",
+    // `origin` is undefined for same-origin and non-browser clients (curl,
+    // Postman, health checks) — allow those; otherwise enforce the allowlist.
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+      return callback(new Error(`Origin not allowed by CORS: ${origin}`));
+    },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     allowedHeaders: ["Accept", "Content-Type", "Authorization"],
   })
