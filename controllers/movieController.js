@@ -5,14 +5,15 @@
 const { tmdb, clampPage, randInt } = require("../services/tmdb");
 const movieCache = require("../services/movieCache");
 
-// Pick one truly random (often obscure), non-adult movie.
-//    TMDB has no native random endpoint, so we brute-force it: pick a random ID,
-//    fetch /movie/{id}, and retry on a 404 (dead ID) or an adult title. To avoid
-//    hanging when we keep hitting dead/adult IDs, we cap attempts and fall back to
-//    a random title from the popular feed (pages 1–500).
-//    Returns { movie, fallback } — fallback is true when the loop maxed out.
 const RANDOM_MAX_ID = 1_200_000; // rough upper bound of TMDB movie IDs
 const RANDOM_MAX_ATTEMPTS = 20; // fail-safe so the loop can't hang the server
+
+// Pick one truly random (often obscure), non-adult movie.
+// TMDB has no native random endpoint, so we brute-force it: pick a random ID,
+// fetch /movie/{id}, and retry on a 404 (dead ID) or an adult title. To avoid
+// hanging when we keep hitting dead/adult IDs, we cap attempts and fall back to
+// a random title from the popular feed (pages 1–500).
+// Returns { movie, fallback } — fallback is true when the loop maxed out.
 async function pickRandomMovie() {
   for (let attempt = 0; attempt < RANDOM_MAX_ATTEMPTS; attempt++) {
     const id = randInt(1, RANDOM_MAX_ID);
