@@ -27,6 +27,7 @@ function publicUser(user) {
     dateOfBirth: user.dateOfBirth || null,
     avatarUrl: user.avatarUrl || null,
     countryCode: user.countryCode || null,
+    badges: Array.isArray(user.badges) ? user.badges : [],
     createdAt: user.createdAt,
   };
 }
