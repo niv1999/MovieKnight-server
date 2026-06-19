@@ -92,8 +92,11 @@ const RATING_SORT_VOTE_FLOOR = 50;
 const searchByText = async (q, page, f) => {
   const data = await tmdb("/search/movie", { query: q, include_adult: "false", page });
   let results = data.results || [];
-  if (f.genre !== null) {
-    results = results.filter((m) => (m.genre_ids || []).includes(f.genre));
+  if (f.genreIds && f.genreIds.length) {
+    // OR semantics: keep a movie if it matches ANY selected genre.
+    results = results.filter((m) =>
+      (m.genre_ids || []).some((id) => f.genreIds.includes(id)),
+    );
   }
   if (f.yearFrom !== null || f.yearTo !== null) {
     results = results.filter((m) => {
@@ -128,7 +131,15 @@ async function search(req, res) {
   const q = String(req.query.q || "").trim();
   const sort = SORTERS[req.query.sort] ? req.query.sort : DEFAULT_SORT;
   const page = clampPage(req.query.page);
-  const genre = req.query.genre ? Number(req.query.genre) : null;
+  // genre may be a single id or a comma/pipe-joined multi-id (e.g. "28,12").
+  // Parse to a numeric list. Number("28,12") is NaN, which silently blanked the
+  // grid (genre_ids.includes(NaN) is always false) — so split first. Multi-genre
+  // is OR (match ANY): users expect "Action or Comedy", and TMDB's comma-AND
+  // yields near-empty results for uncommon combinations.
+  const genreIds = String(req.query.genre || "")
+    .split(/[,|]/)
+    .map((s) => parseInt(s.trim(), 10))
+    .filter(Number.isFinite);
   const yearFrom = req.query.yearFrom ? Number(req.query.yearFrom) : null;
   const yearTo = req.query.yearTo ? Number(req.query.yearTo) : null;
   const minRating = req.query.minRating ? Number(req.query.minRating) : null;
@@ -162,7 +173,7 @@ async function search(req, res) {
     // Free-text search (no person filter): /search/movie, page forwarded 1:1.
     if (q && !withCast && !withCrew) {
       return searchByText(q, page, {
-        genre, yearFrom, yearTo, minRating, minVotes, language, sort,
+        genreIds, yearFrom, yearTo, minRating, minVotes, language, sort,
       });
     }
 
@@ -173,7 +184,7 @@ async function search(req, res) {
       sort_by: SORT_BY[sort],
       page,
     };
-    if (genre !== null) params.with_genres = genre;
+    if (genreIds.length) params.with_genres = genreIds.join("|"); // "|" = OR in TMDB
     if (yearFrom !== null) params["primary_release_date.gte"] = `${yearFrom}-01-01`;
     if (yearTo !== null) params["primary_release_date.lte"] = `${yearTo}-12-31`;
     if (minRating !== null) params["vote_average.gte"] = minRating;

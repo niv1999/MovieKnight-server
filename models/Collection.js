@@ -12,16 +12,9 @@ const collectionItemSchema = new mongoose.Schema(
   { _id: false }
 );
 
-// Embedded saved "Spin the Wheel" state. A slice is either a saved movie or a
-// free-form text entry, so the shape is intentionally loose (DATA_MODEL leaves
-// wheel items open).
-const savedWheelItemSchema = new mongoose.Schema(
-  {
-    label: { type: String }, // displayed text (movie title or free-form entry)
-    movieId: { type: Number, ref: "Movie" }, // set when the slice is a saved movie
-  },
-  { _id: false }
-);
+// Embedded saved "Spin the Wheel" state. The client persists the wheel as a
+// plain array of strings (movie titles / free-form entries), so the model stores
+// [String] to match that format byte-for-byte (DATA_MODEL leaves wheel items open).
 
 const collectionSchema = new mongoose.Schema(
   {
@@ -40,7 +33,7 @@ const collectionSchema = new mongoose.Schema(
     isDefault: { type: Boolean, default: false }, // true for Favorites / Already Watched / Watchlist
     posterUrl: { type: String }, // optional custom cover
     items: { type: [collectionItemSchema], default: [] },
-    savedWheel: { type: [savedWheelItemSchema], default: [] },
+    savedWheel: { type: [String], default: [] },
     createdAt: { type: Date, default: Date.now },
   },
   { collection: "collections" }
