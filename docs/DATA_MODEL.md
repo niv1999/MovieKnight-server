@@ -15,6 +15,7 @@ Collection items + the saved wheel are **embedded** inside the collection docume
 | dateOfBirth | Date | from signup |
 | avatarUrl | String | optional |
 | countryCode | String | ISO-3166 alpha-2, optional |
+| badges | `[{ name, tier, subtitle }]` | progression badges — **cosmetic/mock** (dynamic earning is deferred). `tier` ∈ `gold`/`silver`/`bronze` drives the profile shield colour; `subtitle` is the tooltip line. Empty `[]` for normal users (profile shows dashed empty shields); the Yuviverse7 demo user is seeded with three. |
 | createdAt | Date | default now |
 
 ## `movies` (TMDB cache — "fetch once, store forever")
@@ -57,8 +58,8 @@ The movie *content* lives in `movies` (kept ~forever); this collection caches on
 | isPublic | Boolean | default false |
 | isDefault | Boolean | true for Favorites / Already Watched / Watchlist |
 | posterUrl | String | optional custom cover |
-| items | `[{ movieId: Number→movies._id, addedAt: Date, sortOrder: Number }]` | embedded |
-| savedWheel | `[ ...wheel items ]` | embedded; Spin the Wheel persistence |
+| items | `[{ movieId: Number→movies._id, addedAt: Date, sortOrder: Number }]` | embedded; `_id:false` subdocs |
+| savedWheel | `[String]` | embedded; **reserved** for Spin-the-Wheel persistence. No server endpoint reads/writes it yet — the wheel currently persists **client-side in `localStorage`** (see API_CONTRACT). |
 | createdAt | Date | default now |
 
 ## Relationships
@@ -77,8 +78,8 @@ We deliberately do **not** keep a `collections: [ObjectId]` array on the `users`
 If a screen needs the user **and** their collections in one shot (e.g. profile), **join at read time** (query `collections` by `userId` and return them alongside the user) rather than storing the list on the user. For an ordered display, add a `sortOrder: Number` to `collections` (and later a compound index `{ userId: 1, sortOrder: 1 }`) instead of relying on array position.
 
 ## The 2 required complex queries
-1. **Movie search** — filter `movies` by genre/year/minRating + sort (`GET /api/movies/search`).
-2. **Collection with movies** — aggregation / `populate` joining a collection's `items[]` with the `movies` cache to return full movie objects (`GET /api/collections/:id`).
+1. **Movie search** — combined filters (genre / year / rating / votes / language / cast / crew) + sort (`GET /api/movies/search`, TMDB-backed via `/discover`, cached in `feedcache`).
+2. **Collection with movies** — `GET /api/collections/:id` joins a collection's embedded `items[]` to the `movies` cache (one `Movie.find({ _id: { $in } })` batch lookup, re-imposing the stored item order) to return full movie objects.
 
 ## Deferred (not in MVP — see SPRINT_PLAN §11)
 likes / saves (Explore) · userPreferences (Preferences page).
