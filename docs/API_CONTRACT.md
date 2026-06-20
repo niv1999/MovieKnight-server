@@ -49,7 +49,7 @@ Deferred routes implied by the map but **not** yet in the tables below: `GET /ap
 | PATCH | `/api/users/me` | `{ bio?, name?, avatarUrl?, countryCode? }` | `{ user }` | Bearer | ✅ implemented |
 | GET | `/api/users/:id` | — | `{ user }` (public profile) | — | ⛔ deferred (social) |
 
-- **PATCH `/me`** updates the **signed-in** user's own profile — whitelist only; it never changes `email`/`username`/`passwordHash`. `bio` is trimmed and capped at 280 chars. Returns the updated safe `user`. `400` on an empty/invalid body.
+- **PATCH `/me`** updates the **signed-in** user's own profile — whitelist only; it never changes `email`/`username`/`passwordHash`. `bio` is trimmed and capped at 200 chars. Returns the updated safe `user`. `400` on an empty/invalid body.
 
 ## Movies (TMDB-backed, cached)
 | Method | Path | Query / Params | Returns | Status |

@@ -6,7 +6,7 @@
 const User = require("../models/User");
 const { publicUser } = require("./authController");
 
-const BIO_MAX = 280;
+const BIO_MAX = 200;
 
 // PATCH /api/users/me — requireAuth has already set req.user.
 async function updateMe(req, res, next) {
