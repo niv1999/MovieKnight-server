@@ -33,6 +33,17 @@ function badRequest(message) {
   throw err;
 }
 
+// Fisher–Yates shuffle (returns a new array; never mutates the input). Used to
+// vary the candidate order the picker hands Gemini so repeat calls differ.
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 // Load a collection the signed-in user OWNS, or throw (404 if missing/not theirs —
 // findOr404 + assertOwner keep the 404-not-403 rule in one place).
 async function loadOwnedCollection(id, req) {
@@ -158,21 +169,32 @@ async function picker(req, res) {
   // Can't return more picks than the collection holds.
   count = Math.min(count, movies.length);
 
+  // "Try Again" sends the SAME body, so to surface a genuinely different set each
+  // time we (a) shuffle the candidate order the model sees, (b) hand it a one-off
+  // variation token, and (c) run at a higher temperature. Together these break the
+  // determinism that otherwise returned identical picks on every press.
+  const shuffled = shuffle(movies);
+  const variationToken = Math.random().toString(36).slice(2, 10);
+
   // Strict schema prompt: the model must echo back movieIds FROM the given list
   // (so we can map them to real movies) and nothing else.
   const aiPrompt = [
     "You are a film curator. From the JSON list of movies below, select EXACTLY",
     `${count} movie(s) that best match this request: "${prompt}".`,
     "Only choose from the provided list — never invent titles.",
+    "When several movies fit the request well, vary your selection so repeat",
+    `requests surface different good picks. Variation token: ${variationToken}.`,
     'Respond with ONLY a JSON array of objects with this exact shape:',
     '[{ "movieId": <number, the id field from the list>, "reason": "<one short sentence>" }]',
     "No prose, no markdown, no code fences — just the JSON array.",
     "",
     "MOVIES:",
-    JSON.stringify(movies),
+    JSON.stringify(shuffled),
   ].join("\n");
 
-  const picks = await generateJsonArray(aiPrompt);
+  // Higher temperature here (vs. the 0.4 default) so the picks aren't locked to the
+  // single "most obvious" answer — that's what makes Try Again feel alive.
+  const picks = await generateJsonArray(aiPrompt, { temperature: 1.0 });
 
   // Map the AI's ids back to real movie docs, dropping anything not actually in the
   // collection (guards against a hallucinated id). Preserve the AI's ordering.

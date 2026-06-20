@@ -85,13 +85,15 @@ function parseJsonArray(text) {
 // describe the exact JSON shape (the controllers own those schema strings). All
 // failure modes — missing key (500), timeout (504), bad JSON (502), upstream
 // error (mapped/502) — arrive as Errors with a `.status`.
-async function generateJsonArray(prompt) {
+async function generateJsonArray(prompt, { temperature = 0.4 } = {}) {
   const model = getClient().getGenerativeModel({
     model: MODEL,
     generationConfig: {
       // Force structured output: the model returns a JSON value, not chat prose.
       responseMimeType: "application/json",
-      temperature: 0.4, // a little creativity for recommendations, still grounded
+      // A little creativity for recommendations, still grounded. Callers that want
+      // fresh picks on repeat calls (e.g. "Let AI Choose" → Try Again) raise this.
+      temperature,
       // gemini-2.5-* are "thinking" models: left on, a 50-title search spends its
       // whole budget reasoning and blows past GEMINI_TIMEOUT_MS. Our tasks are
       // ranking/extraction, not reasoning, so we disable thinking — a 50-result
