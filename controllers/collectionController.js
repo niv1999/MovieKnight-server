@@ -198,24 +198,17 @@ function assertOwner(collection, req) {
 // Handlers
 // ===========================================================================
 
-// GET /api/collections — collections as lightweight cards. Defaults first, then
-// by creation order. Query filters:
-//   ?isDefault=true   the signed-in user's DEFAULT lists only (Favorites etc.) —
-//                     used to wire the heart/eye buttons to membership.
-//   ?isDefault=false  the user's custom lists only.
-//   ?isPublic=true    PUBLIC lists across ALL users (for the Explore page).
-// With no filter (or a user-scoped filter) the response is the user's own lists.
+// GET /api/collections — the signed-in user's collections as lightweight cards.
+// Defaults first, then by creation order. Query filter:
+//   ?isDefault=true   default lists only (Favorites etc.) — wires the heart/eye
+//                     buttons to membership.
+//   ?isDefault=false  custom lists only.
+// (Browsing OTHER users' public lists belongs to a separate, paginated Explore
+//  endpoint — deliberately out of scope here.)
 async function listMine(req, res) {
-  const wantPublic = req.query.isPublic === "true";
-
-  let filter;
-  if (wantPublic) {
-    filter = { isPublic: true }; // Explore: browse everyone's public lists
-  } else {
-    filter = { userId: req.user._id }; // the signed-in user's own lists
-    if (req.query.isDefault === "true") filter.isDefault = true;
-    else if (req.query.isDefault === "false") filter.isDefault = false;
-  }
+  const filter = { userId: req.user._id };
+  if (req.query.isDefault === "true") filter.isDefault = true;
+  else if (req.query.isDefault === "false") filter.isDefault = false;
 
   const cols = await Collection.find(filter)
     .sort({ isDefault: -1, createdAt: 1 })
@@ -231,21 +224,9 @@ async function listMine(req, res) {
   );
   const postersById = await postersFor([...wantedIds]);
 
-  // For the cross-user public list, resolve each owner's username in one query.
-  let authorById = null;
-  if (wantPublic) {
-    const ownerIds = [...new Set(cols.map((c) => String(c.userId)))];
-    const owners = await User.find({ _id: { $in: ownerIds } }, "username").lean();
-    authorById = new Map(owners.map((u) => [String(u._id), u.username]));
-  }
-
-  const meId = String(req.user._id);
-  const data = cols.map((c) => {
-    const ownerId = String(c.userId);
-    const isOwner = ownerId === meId;
-    const author = wantPublic ? authorById.get(ownerId) || null : req.user.username;
-    return toCard(c, postersById, author, isOwner);
-  });
+  // Every collection here is the caller's own, so they're always the owner.
+  const author = req.user.username;
+  const data = cols.map((c) => toCard(c, postersById, author, true));
   res.json({ ok: true, data });
 }
 
