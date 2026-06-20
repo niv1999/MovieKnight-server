@@ -72,6 +72,7 @@ function toCard(collection, postersById, author, isOwner) {
     isDefault: !!collection.isDefault,
     isPublic: !!collection.isPublic,
     posterUrl: collection.posterUrl || null, // custom cover overrides the collage
+    sort: collection.sort || "added_desc", // remembered "Sort by"
     movieCount: ordered.length,
     movieIds: ordered.map((it) => it.movieId), // all TMDB ids — cheap membership checks (heart/eye)
     posters, // bare TMDB paths for the first ≤4 movies (client prefixes the CDN)
@@ -110,6 +111,7 @@ function toFull(collection, movieDocsById, author, isOwner) {
     isDefault: !!collection.isDefault,
     isPublic: !!collection.isPublic,
     posterUrl: collection.posterUrl || null,
+    sort: collection.sort || "added_desc", // remembered "Sort by"
     author: author || null,
     authorId: String(collection.userId),
     isOwner: !!isOwner,
@@ -295,33 +297,58 @@ async function getOne(req, res) {
   res.json({ ok: true, data: toFull(collection, movieDocsById, author, isOwner) });
 }
 
-// PATCH /api/collections/:id — owner only. Body: { name?, isPublic? }.
-// Powers inline rename + the Publish/Unpublish toggle. Renaming a default
-// collection is rejected (400); toggling its visibility is allowed.
+// PATCH /api/collections/:id — owner only. Body: { name?, isPublic?, sort? }.
+// Powers inline rename, the Publish/Unpublish toggle, and remembering the chosen
+// "Sort by". Renaming a default collection is rejected (400); toggling its
+// visibility or sort is allowed (defaults are sortable like any other list).
 async function update(req, res) {
   const collection = await findOr404(req.params.id);
   assertOwner(collection, req);
 
   const body = req.body || {};
-  let touched = false;
+  let provided = false; // a recognised field was sent (else it's a bad request)
+  let changed = false; // a value actually differs (gates the DB write)
 
   if (body.name !== undefined) {
+    provided = true;
     assertEditableName(collection); // defaults can't be renamed
-    collection.name = cleanName(body.name);
-    touched = true;
+    const name = cleanName(body.name);
+    if (name !== collection.name) {
+      collection.name = name;
+      changed = true;
+    }
   }
   if (body.isPublic !== undefined) {
-    collection.isPublic = !!body.isPublic;
-    touched = true;
+    provided = true;
+    const next = !!body.isPublic;
+    if (next !== collection.isPublic) {
+      collection.isPublic = next;
+      changed = true;
+    }
+  }
+  if (body.sort !== undefined) {
+    provided = true;
+    if (!Collection.SORT_KEYS.includes(body.sort)) {
+      const err = new Error("Invalid sort option");
+      err.status = 400;
+      throw err;
+    }
+    if (body.sort !== collection.sort) {
+      collection.sort = body.sort;
+      changed = true;
+    }
   }
 
-  if (!touched) {
+  if (!provided) {
     const err = new Error("No updatable fields provided");
     err.status = 400;
     throw err;
   }
 
-  await collection.save();
+  // Setting a field to its current value is a valid idempotent request, not an
+  // error — only touch Mongo when something actually changed; otherwise this is a
+  // silent no-op that still returns the current card with 200.
+  if (changed) await collection.save();
 
   // Rebuild the card shape (with collage posters) so the client can refresh in place.
   const firstIds = itemsInOrder(collection)
