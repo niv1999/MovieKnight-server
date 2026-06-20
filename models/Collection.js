@@ -16,6 +16,18 @@ const collectionItemSchema = new mongoose.Schema(
 // plain array of strings (movie titles / free-form entries), so the model stores
 // [String] to match that format byte-for-byte (DATA_MODEL leaves wheel items open).
 
+// The collection-page "Sort by" choices (must match client SORTS keys in
+// client/js/pages/collection/shared.js). Stored per-collection so a user's chosen
+// ordering is remembered the next time they open that list.
+const SORT_KEYS = [
+  "added_desc",
+  "added_asc",
+  "title_asc",
+  "title_desc",
+  "year_desc",
+  "year_asc",
+];
+
 const collectionSchema = new mongoose.Schema(
   {
     // Owner. Indexed: every "list a user's collections" query filters on this
@@ -32,6 +44,7 @@ const collectionSchema = new mongoose.Schema(
     isPublic: { type: Boolean, default: false },
     isDefault: { type: Boolean, default: false }, // true for Favorites / Already Watched / Watchlist
     posterUrl: { type: String }, // optional custom cover
+    sort: { type: String, enum: SORT_KEYS, default: "added_desc" }, // remembered "Sort by"
     items: { type: [collectionItemSchema], default: [] },
     savedWheel: { type: [String], default: [] },
     createdAt: { type: Date, default: Date.now },
@@ -39,4 +52,6 @@ const collectionSchema = new mongoose.Schema(
   { collection: "collections" }
 );
 
-module.exports = mongoose.model("Collection", collectionSchema);
+const Collection = mongoose.model("Collection", collectionSchema);
+Collection.SORT_KEYS = SORT_KEYS; // shared with the controller's PATCH validation
+module.exports = Collection;

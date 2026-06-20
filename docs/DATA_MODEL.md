@@ -58,6 +58,7 @@ The movie *content* lives in `movies` (kept ~forever); this collection caches on
 | isPublic | Boolean | default false |
 | isDefault | Boolean | true for Favorites / Already Watched / Watchlist |
 | posterUrl | String | optional custom cover |
+| sort | String | remembered "Sort by" for the collection page; enum of the 6 client sort keys (`added_desc`/`added_asc`/`title_asc`/`title_desc`/`year_desc`/`year_asc`), default `added_desc`. Set via `PATCH /api/collections/:id`. |
 | items | `[{ movieId: Number→movies._id, addedAt: Date, sortOrder: Number }]` | embedded; `_id:false` subdocs |
 | savedWheel | `[String]` | embedded; **reserved** for Spin-the-Wheel persistence. No server endpoint reads/writes it yet — the wheel currently persists **client-side in `localStorage`** (see API_CONTRACT). |
 | createdAt | Date | default now |

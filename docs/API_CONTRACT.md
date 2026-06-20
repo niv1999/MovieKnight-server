@@ -88,7 +88,7 @@ Deferred routes implied by the map but **not** yet in the tables below: `GET /ap
 | GET | `/api/collections` | — (query `?isDefault=true\|false`) | `[card]` — the caller's lists, defaults first |
 | POST | `/api/collections` | `{ name? }` | `{card}` (**201**) — new empty list; auto-names `My Collection N` if blank |
 | GET | `/api/collections/:id` | — | `{full}` — collection + its movies ← **complex query #2** (join items↔movies) |
-| PATCH | `/api/collections/:id` | `{ name?, isPublic? }` | `{card}` — inline rename + Publish/Unpublish |
+| PATCH | `/api/collections/:id` | `{ name?, isPublic?, sort? }` | `{card}` — inline rename + Publish/Unpublish + remembered sort (`sort` is one of the 6 sort keys) |
 | DELETE | `/api/collections/:id` | — | `{ deleted: true, id }` |
 | POST | `/api/collections/:id/movies` | `{ tmdbId }` | `{full}` |
 | DELETE | `/api/collections/:id/movies/:tmdbId` | — | `{full}` |
