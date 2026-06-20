@@ -24,9 +24,11 @@ The client is a **static multi-page app** (separate `.html` files, params via qu
 | `…/collections/:collectionId/add-movie` | collection modal | `POST /api/collections/:id/movies` | ⛔ S5 |
 | `…/collections/:collectionId/picker` | `picker.html?collection=` | `GET /api/collections/:id` | ⛔ S5 |
 | `…/picker/wheel` | `wheel.html?collection=` | `GET/PUT /api/collections/:id/wheel` | ⛔ S6 |
-| `…/picker/let-ai-choose` | *(TODO page)* | `POST /api/collections/:id/ai-pick` | ⛔ deferred (AI extra) |
+| `…/picker/let-ai-choose` | `picker.html` (AI mode) | `POST /api/ai/picker` | ✅ wired |
+| `/search` (AI) | search UI / modal | `POST /api/ai/search` | ✅ wired |
+| `…/collections/:collectionId/enhance` | *(TODO page)* | `POST /api/ai/enhance/:id` | ✅ backend ready, FE TODO |
 
-Deferred routes implied by the map but **not** yet in the tables below: `GET /api/users/:id` (public profile of another user — social, deferred) and `POST /api/collections/:id/ai-pick` (the "Let AI Choose" extra).
+Deferred routes implied by the map but **not** yet in the tables below: `GET /api/users/:id` (public profile of another user — social, deferred).
 
 ## Auth  ✅ implemented (S4)
 | Method | Path | Body | Returns (`data`) | Auth |
@@ -98,5 +100,19 @@ Deferred routes implied by the map but **not** yet in the tables below: `GET /ap
 | GET | `/api/collections/:id/wheel` | — | `{wheelConfig}` |
 | PUT | `/api/collections/:id/wheel` | `{wheelConfig}` | `{saved}` |
 
+## AI (Gemini-backed, Bearer)  ✅ implemented
+Three AI features powered by Google Gemini (`@google/generative-ai`, model `gemini-2.5-flash`). All are **login-gated** (Bearer). Gemini is configured for **JSON-only** output (`responseMimeType: "application/json"` + a strict per-feature schema prompt), so responses are pure parseable JSON — never markdown/prose. Gemini only **ranks/suggests**; every returned record is re-resolved server-side against our own data (collection movies for the picker, TMDB for search/enhance), so the API never returns titles the model invented.
+
+| Method | Path | Body / Params | Returns (`data`) |
+|---|---|---|---|
+| POST | `/api/ai/picker` | `{ collectionId, prompt, count }` | `[movieCard + reason]` — picks **from the user's own collection** |
+| POST | `/api/ai/search` | `{ query }` | `[tmdbMovie]` — up to 50 real TMDB movies for a natural-language query |
+| POST | `/api/ai/enhance/:id` | `:id` (collectionId) | `[tmdbMovie + reason]` — exactly 3 recs **not** already in the collection |
+
+- **`POST /api/ai/picker`** ("Let AI Choose") — **owner only** (the collection must belong to the caller; non-owner/missing → `404`). `prompt` is the natural-language ask (e.g. `"a scary movie before the 2000s"`); `count` is clamped to **1–3** and to the collection size. Returns the chosen movies as TMDB-shaped cards (`{ id, title, poster_path, vote_average, release_date, releaseYear, reason }`) in the AI's ranked order. Ids the model returns that aren't actually in the collection are discarded. `400` if the collection has no movies.
+- **`POST /api/ai/search`** ("AI Search") — `query` is required (`400` if blank). Gemini proposes up to 50 `{title, year}`; each is resolved via TMDB `/search/movie` (year-preferred match, concurrency-capped), misses/duplicates dropped. `data` is **raw TMDB movie objects** — the same shape as `GET /api/movies/search`, so the existing client normaliser handles it. No `reason` field (it's a results grid). Note: results are **not** persisted to the movies cache.
+- **`POST /api/ai/enhance/:id`** ("Enhance Collection") — **owner only** (same `404` rule as picker). Returns exactly **3** movies the user doesn't already have, each as a raw TMDB object **plus** a `reason` string. Titles already in the collection are excluded both in the prompt and by a post-filter on TMDB id. *(Backend ready; frontend lands later.)*
+- **Errors:** `400` (bad/missing input) · `401` (no/invalid token) · `404` (collection missing or not the caller's) · `500` (`GEMINI_API_KEY` not configured) · `502` (Gemini returned malformed/non-JSON, or an upstream/quota failure) · `504` (Gemini call exceeded the timeout, default 20s). Requires `GEMINI_API_KEY` in the server env (see `.env.example`); optional `GEMINI_MODEL` / `GEMINI_TIMEOUT_MS` overrides.
+
 ## Error shape
-`{ ok: false, error: "message" }` with status **400** (bad input) · **401** (no/invalid token) · **404** (not found) · **500** (server).
+`{ ok: false, error: "message" }` with status **400** (bad input) · **401** (no/invalid token) · **404** (not found) · **500** (server) · **502** (bad upstream / AI parse) · **504** (upstream timeout).

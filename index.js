@@ -15,6 +15,7 @@ const catalogRoutes = require("./routes/catalogRoutes");
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
 const collectionRoutes = require("./routes/collectionRoutes");
+const aiRoutes = require("./routes/aiRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -76,6 +77,7 @@ app.use("/api", catalogRoutes); // /api/genres, /api/providers
 app.use("/api/auth", authRoutes); //  /api/auth/signup, /login, /me
 app.use("/api/users", userRoutes); // /api/users/me (PATCH profile)
 app.use("/api", collectionRoutes); // /api/collections/* (CRUD + add/remove movie)
+app.use("/api/ai", aiRoutes); //   /api/ai/picker, /search, /enhance/:id (Gemini)
 
 // --- 404: contract envelope under /api, named-payload shape elsewhere ---
 // Use req.originalUrl (never rewritten by sub-routers) so the shape stays correct

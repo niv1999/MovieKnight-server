@@ -400,4 +400,8 @@ module.exports = {
   remove,
   addMovie,
   removeMovie,
+  // Shared with the AI controller (controllers/aiController.js) so the
+  // ownership / 404-not-403 rules live in exactly one place.
+  findOr404,
+  assertOwner,
 };
