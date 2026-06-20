@@ -73,6 +73,7 @@ function toCard(collection, postersById, author, isOwner) {
     isPublic: !!collection.isPublic,
     posterUrl: collection.posterUrl || null, // custom cover overrides the collage
     movieCount: ordered.length,
+    movieIds: ordered.map((it) => it.movieId), // all TMDB ids — cheap membership checks (heart/eye)
     posters, // bare TMDB paths for the first ≤4 movies (client prefixes the CDN)
     likesCount: 0, // deferred (Explore) — always 0 for now
     savesCount: 0,
@@ -197,11 +198,26 @@ function assertOwner(collection, req) {
 // Handlers
 // ===========================================================================
 
-// GET /api/collections — the signed-in user's own collections (profile grid).
-// Defaults first, then by creation order. Each carries up to 4 poster paths for
-// the collage cover.
+// GET /api/collections — collections as lightweight cards. Defaults first, then
+// by creation order. Query filters:
+//   ?isDefault=true   the signed-in user's DEFAULT lists only (Favorites etc.) —
+//                     used to wire the heart/eye buttons to membership.
+//   ?isDefault=false  the user's custom lists only.
+//   ?isPublic=true    PUBLIC lists across ALL users (for the Explore page).
+// With no filter (or a user-scoped filter) the response is the user's own lists.
 async function listMine(req, res) {
-  const cols = await Collection.find({ userId: req.user._id })
+  const wantPublic = req.query.isPublic === "true";
+
+  let filter;
+  if (wantPublic) {
+    filter = { isPublic: true }; // Explore: browse everyone's public lists
+  } else {
+    filter = { userId: req.user._id }; // the signed-in user's own lists
+    if (req.query.isDefault === "true") filter.isDefault = true;
+    else if (req.query.isDefault === "false") filter.isDefault = false;
+  }
+
+  const cols = await Collection.find(filter)
     .sort({ isDefault: -1, createdAt: 1 })
     .lean();
 
@@ -215,7 +231,21 @@ async function listMine(req, res) {
   );
   const postersById = await postersFor([...wantedIds]);
 
-  const data = cols.map((c) => toCard(c, postersById, req.user.username, true));
+  // For the cross-user public list, resolve each owner's username in one query.
+  let authorById = null;
+  if (wantPublic) {
+    const ownerIds = [...new Set(cols.map((c) => String(c.userId)))];
+    const owners = await User.find({ _id: { $in: ownerIds } }, "username").lean();
+    authorById = new Map(owners.map((u) => [String(u._id), u.username]));
+  }
+
+  const meId = String(req.user._id);
+  const data = cols.map((c) => {
+    const ownerId = String(c.userId);
+    const isOwner = ownerId === meId;
+    const author = wantPublic ? authorById.get(ownerId) || null : req.user.username;
+    return toCard(c, postersById, author, isOwner);
+  });
   res.json({ ok: true, data });
 }
 
@@ -339,7 +369,7 @@ async function addMovie(req, res) {
 
   const tmdbId = Math.trunc(Number(req.body && req.body.tmdbId));
   if (!Number.isFinite(tmdbId) || tmdbId <= 0) {
-    const err = new Error("A valid tmdbId is required");
+    const err = new Error("A valid movie id is required");
     err.status = 400;
     throw err;
   }

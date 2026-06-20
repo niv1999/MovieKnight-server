@@ -9,7 +9,7 @@ const TMDB_BASE = "https://api.themoviedb.org/3";
 async function tmdb(path, params = {}) {
   const apiKey = process.env.TMDB_API_KEY;
   if (!apiKey) {
-    const err = new Error("TMDB_API_KEY is not configured on the server");
+    const err = new Error("Movie service is not configured on the server");
     err.status = 500;
     throw err;
   }
@@ -30,8 +30,11 @@ async function tmdb(path, params = {}) {
     } catch (_) {
       /* non-JSON error body */
     }
-    const err = new Error(`TMDB request failed${detail ? `: ${detail}` : ""}`);
-    // Map TMDB's status straight through (the frontend treats non-2xx as failure).
+    // Log the upstream detail server-side only; never surface the provider name
+    // (or raw technical detail) to the client.
+    if (detail) console.warn(`Upstream movie service ${res.status}: ${detail}`);
+    const err = new Error("Movie service request failed");
+    // Map the upstream status straight through (the frontend treats non-2xx as failure).
     err.status = res.status;
     throw err;
   }
