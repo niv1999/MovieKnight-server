@@ -8,6 +8,13 @@ const collectionItemSchema = new mongoose.Schema(
     movieId: { type: Number, ref: "Movie", required: true }, // → Movie._id (TMDB id)
     addedAt: { type: Date, default: Date.now },
     sortOrder: { type: Number, default: 0 },
+    // Filter facets, hydrated from TMDB at add-time (collectionController.addMovie).
+    // Embedded on the item — not just the shared `movies` cache — so the frontend
+    // can filter a collection's grid by genre/streaming service without an extra
+    // per-movie lookup. genre_ids → TMDB genre ids; provider_ids → US flatrate
+    // (streaming) watch-provider ids.
+    genre_ids: { type: [Number], default: [] },
+    provider_ids: { type: [Number], default: [] },
   },
   { _id: false }
 );

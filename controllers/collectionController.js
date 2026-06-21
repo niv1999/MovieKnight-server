@@ -94,6 +94,10 @@ function toMovieCard(item, doc) {
     release_date:
       doc && doc.releaseDate ? doc.releaseDate.toISOString().slice(0, 10) : "",
     releaseYear: doc ? doc.releaseYear ?? null : null,
+    // Filter facets live on the embedded item (hydrated at add-time), so the grid
+    // can be filtered client-side without a per-movie lookup.
+    genre_ids: Array.isArray(item.genre_ids) ? item.genre_ids : [],
+    provider_ids: Array.isArray(item.provider_ids) ? item.provider_ids : [],
     addedAt: item.addedAt,
     sortOrder: item.sortOrder || 0,
   };
@@ -135,40 +139,66 @@ async function postersFor(movieIds) {
   return map;
 }
 
-// Ensure a movie is present in the `movies` cache before it's referenced by a
-// collection item, so the cover/grid always has a poster to show ("cache on add",
-// SPRINT_PLAN S5). Most added movies were already warmed by a prior search, so the
-// TMDB call only happens for a cold id. Best-effort: a cache write failure must not
-// block the add (the item still references a valid TMDB id).
-async function ensureMovieCached(tmdbId) {
-  if (!dbReady()) return;
-  try {
-    const existing = await Movie.findById(tmdbId).select("_id").lean();
-    if (existing) return;
-    const movie = await tmdb(`/movie/${tmdbId}`); // throws 404 on a bad id
-    await Movie.updateOne(
-      { _id: tmdbId },
-      {
-        $set: {
-          title: movie.title || movie.original_title || "",
-          releaseYear: movie.release_date
-            ? Number(String(movie.release_date).slice(0, 4)) || null
-            : null,
-          releaseDate: movie.release_date ? new Date(movie.release_date) : null,
-          posterPath: movie.poster_path || null,
-          backdropPath: movie.backdrop_path || null,
-          overview: movie.overview || "",
-          rating: movie.vote_average ?? null,
-          popularity: movie.popularity ?? null,
-          lastUpdated: new Date(),
+// Hydrate a movie being added to a collection: fetch its full TMDB details +
+// US watch providers in one call, warm the shared `movies` cache (so the
+// cover/grid has a poster — "cache on add", SPRINT_PLAN S5), and return the
+// filter facets (genre_ids, provider_ids) to embed on the collection item.
+//
+// Unlike a cache-only warm, this ALWAYS hits TMDB on add: list/search endpoints
+// don't carry watch providers, and providers drift over time, so a fresh fetch is
+// the only way to get current filter data. Adding to a collection is a rare,
+// user-initiated action, so the extra call is cheap. The TMDB error on a bad/unknown
+// id propagates (the add fails with that status) rather than silently storing an
+// un-filterable item. Cache-warming is best-effort: a Mongo write failure is logged
+// but never blocks the add.
+async function hydrateMovieOnAdd(tmdbId) {
+  const movie = await tmdb(`/movie/${tmdbId}`, {
+    append_to_response: "watch/providers",
+  }); // throws (e.g. 404) on a bad id
+
+  // TMDB /movie/:id returns genres as [{ id, name }] — collapse to ids.
+  const genre_ids = Array.isArray(movie.genres)
+    ? movie.genres.map((g) => g && g.id).filter((id) => Number.isFinite(id))
+    : [];
+
+  // append_to_response nests the providers under the literal "watch/providers" key.
+  // Default region US; flatrate = the streaming (subscription) tier the filter uses.
+  const wp = movie["watch/providers"];
+  const usFlatrate = wp && wp.results && wp.results.US && wp.results.US.flatrate;
+  const provider_ids = Array.isArray(usFlatrate)
+    ? usFlatrate.map((p) => p && p.provider_id).filter((id) => Number.isFinite(id))
+    : [];
+
+  // Warm tier-1 cache (best-effort). We don't gate on a cache hit here because we
+  // needed the TMDB call for the facets anyway; this keeps poster/title fresh too.
+  if (dbReady()) {
+    try {
+      await Movie.updateOne(
+        { _id: tmdbId },
+        {
+          $set: {
+            title: movie.title || movie.original_title || "",
+            releaseYear: movie.release_date
+              ? Number(String(movie.release_date).slice(0, 4)) || null
+              : null,
+            releaseDate: movie.release_date ? new Date(movie.release_date) : null,
+            posterPath: movie.poster_path || null,
+            backdropPath: movie.backdrop_path || null,
+            overview: movie.overview || "",
+            rating: movie.vote_average ?? null,
+            popularity: movie.popularity ?? null,
+            lastUpdated: new Date(),
+          },
+          $setOnInsert: { fullDetails: false },
         },
-        $setOnInsert: { fullDetails: false },
-      },
-      { upsert: true }
-    );
-  } catch (err) {
-    console.error("⚠️  ensureMovieCached failed for", tmdbId, "-", err.message);
+        { upsert: true }
+      );
+    } catch (err) {
+      console.error("⚠️  movie cache warm failed for", tmdbId, "-", err.message);
+    }
   }
+
+  return { genre_ids, provider_ids };
 }
 
 // Load a collection by id or throw a 404. Used by every /:id handler.
@@ -384,8 +414,14 @@ async function addMovie(req, res) {
 
   const already = (collection.items || []).some((it) => it.movieId === tmdbId);
   if (!already) {
-    await ensureMovieCached(tmdbId); // store the movie before referencing it
-    collection.items.push({ movieId: tmdbId, addedAt: new Date() });
+    // Fetch details + US providers, warm the cache, and capture the filter facets.
+    const { genre_ids, provider_ids } = await hydrateMovieOnAdd(tmdbId);
+    collection.items.push({
+      movieId: tmdbId,
+      addedAt: new Date(),
+      genre_ids,
+      provider_ids,
+    });
     await collection.save();
   }
 
