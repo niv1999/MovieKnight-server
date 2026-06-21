@@ -31,5 +31,8 @@ router.delete(
 // is owner-only (enforced in the controller).
 router.get("/collections/:id/wheel", requireAuth, route(collections.getWheel));
 router.put("/collections/:id/wheel", requireAuth, route(collections.saveWheel));
+// Distinct genre/provider facet ids present in this collection (for the wheel's
+// filter chips). Pure DB read — no TMDB. Literal sub-path, no param clash.
+router.get("/collections/:id/wheel/filters", requireAuth, route(collections.wheelFilters));
 
 module.exports = router;

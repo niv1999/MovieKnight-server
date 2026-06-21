@@ -539,11 +539,47 @@ async function saveWheel(req, res) {
   });
 }
 
-// NOTE: there is intentionally NO server-side wheel-filter endpoint. The full
-// collection payload (toFull → toMovieCard) already ships genre_ids + provider_ids
-// per movie, so the "Spin the Wheel" UI filters the user's own collection
-// client-side (genre OR, provider OR) with no extra round-trip. Provider facets are
-// US flatrate (subscription) ids — see toMovieCard / hydrateMovieOnAdd.
+// NOTE: the wheel filtering itself is client-side — the full collection payload
+// (toFull → toMovieCard) already ships genre_ids + provider_ids per movie, so the
+// "Spin the Wheel" UI filters the user's own collection without an extra round-trip
+// (genre OR, provider OR). The endpoint below only exposes the SET of facet ids
+// actually present, so the UI can build filter chips that never match zero movies.
+
+// GET /api/collections/:id/wheel/filters — the distinct genre + provider ids that
+// actually appear across THIS collection's movies, so the Wheel UI can offer only
+// filters that match something. Pure Mongo read: the facets are already embedded on
+// each item (genre_ids / provider_ids, hydrated at add-time + backfilled), so there
+// is NO TMDB call and not even a movies join — one collection lookup is enough.
+// Visibility follows getWheel (owner, or a PUBLIC collection); a private/foreign
+// collection is 404 (existence not leaked). Provider ids are US flatrate only, so a
+// collection of non-streaming titles legitimately returns availableProviders: [].
+async function wheelFilters(req, res) {
+  const collection = await findOr404(req.params.id);
+
+  const isOwner = !!req.user && collection.userId.equals(req.user._id);
+  if (!collection.isPublic && !isOwner) {
+    const err = new Error("Collection not found"); // don't leak a private collection
+    err.status = 404;
+    throw err;
+  }
+
+  // Union the per-item facets into ordered, de-duped id lists (insertion order =
+  // first-seen across items; the client maps ids → names via /api/genres,/providers).
+  const genres = new Set();
+  const providers = new Set();
+  for (const item of collection.items || []) {
+    for (const g of item.genre_ids || []) if (Number.isFinite(g)) genres.add(g);
+    for (const p of item.provider_ids || []) if (Number.isFinite(p)) providers.add(p);
+  }
+
+  res.json({
+    ok: true,
+    data: {
+      availableGenres: [...genres],
+      availableProviders: [...providers],
+    },
+  });
+}
 
 module.exports = {
   listMine,
@@ -555,6 +591,7 @@ module.exports = {
   removeMovie,
   getWheel,
   saveWheel,
+  wheelFilters,
   // Shared with the AI controller (controllers/aiController.js) so the
   // ownership / 404-not-403 rules live in exactly one place.
   findOr404,
