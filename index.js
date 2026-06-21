@@ -90,10 +90,15 @@ app.use((req, res) => {
 });
 
 // --- central error handler: surface TMDB/config status codes ---
+// Only errors we threw DELIBERATELY (those carry an explicit `err.status` — the
+// validation 400s, 404s, mapped upstream/AI 5xx, etc.) expose their message to the
+// client. An error with no `err.status` is an UNEXPECTED bug (a TypeError, a
+// Mongoose error, …) whose raw `.message` could leak internals, so it becomes a
+// 500 with a generic message — the full error is still logged server-side below.
 app.use((err, req, res, next) => {
   const status = err.status || 500;
   if (status >= 500) console.error(err);
-  const message = err.message || "Server error";
+  const message = err.status ? err.message || "Server error" : "Server error";
   if (req.originalUrl.startsWith("/api/")) {
     return res.status(status).json({ ok: false, error: message });
   }

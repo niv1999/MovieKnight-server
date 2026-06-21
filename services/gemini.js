@@ -31,7 +31,9 @@ let client = null;
 function getClient() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    const err = new Error("GEMINI_API_KEY is not configured on the server");
+    // Don't name the env var / provider to the client (mirrors services/tmdb.js's
+    // "Movie service is not configured"); the missing key is obvious server-side.
+    const err = new Error("AI service is not configured on the server");
     err.status = 500;
     throw err;
   }
@@ -107,12 +109,15 @@ async function generateJsonArray(prompt, { temperature = 0.4 } = {}) {
     result = await withTimeout(
       model.generateContent(prompt),
       GEMINI_TIMEOUT_MS,
-      "Gemini request"
+      "AI request" // client-facing label; never reveals the provider name
     );
   } catch (err) {
     if (err.status) throw err; // our own timeout/config error — already shaped
-    // SDK/network/quota failure — treat as a bad upstream gateway.
-    const wrapped = new Error(`Gemini request failed: ${err.message}`);
+    // SDK/network/quota failure. Log the real detail server-side only (it can carry
+    // provider name, URLs, quota text), and surface a generic upstream error —
+    // same masking the TMDB client does (services/tmdb.js).
+    console.warn("Upstream AI service error:", err.message);
+    const wrapped = new Error("AI service request failed");
     wrapped.status = 502;
     throw wrapped;
   }
