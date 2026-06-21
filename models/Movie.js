@@ -17,6 +17,10 @@ const movieSchema = new mongoose.Schema(
     director: { type: String },
     cast: { type: [String], default: [] },
     genres: { type: [String], default: [] },
+    // TMDB theme keywords (e.g. "heist", "time travel"), stored lowercased so the
+    // DB can be searched/filtered by theme (GET /api/movies/search?keyword=heist).
+    // Multikey-indexed: an equality query on an array field uses the index per-element.
+    keywords: { type: [String], default: [], index: true },
     trailerKey: { type: String }, // YouTube key
     popularity: { type: Number },
     // false when the doc was first seen via a list endpoint (/discover, /search),

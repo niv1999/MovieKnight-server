@@ -11,6 +11,7 @@
 //     it never invents the data we return (we re-resolve everything ourselves).
 
 const Movie = require("../models/Movie");
+const User = require("../models/User");
 const { tmdb } = require("../services/tmdb");
 const { dbReady } = require("../services/movieCache");
 const { generateJsonArray } = require("../services/gemini");
@@ -21,6 +22,26 @@ const MAX_PICK = 3; // "Let AI Choose" returns at most this many
 const MAX_SEARCH_RESULTS = 50; // "AI Search" resolves at most this many titles
 const ENHANCE_COUNT = 3; // "Enhance Collection" recommends exactly this many
 const TMDB_CONCURRENCY = 6; // parallel TMDB lookups when resolving AI titles
+
+// Smart Reroll ("Try Again"): the client sends the ids currently on screen as
+// `exclude_ids`. We SOFT-filter them out of the new suggestions, but only while at
+// least this many fresh options remain — below the floor we let excluded ids back
+// in rather than return empty/short cards (the "crucial fallback").
+const MIN_AFTER_EXCLUDE = 3;
+const MAX_AI_SESSION_BYTES = 100_000; // cap a saved AI session blob (abuse guard)
+
+// Coerce a client `exclude_ids` payload (array of numbers/numeric strings) into a
+// Set<number> of TMDB ids. Tolerates junk: non-numeric entries are dropped, a
+// non-array becomes an empty set (the soft filter then simply does nothing).
+function parseExcludeIds(raw) {
+  const set = new Set();
+  if (!Array.isArray(raw)) return set;
+  for (const v of raw) {
+    const n = Math.trunc(Number(v));
+    if (Number.isFinite(n)) set.add(n);
+  }
+  return set;
+}
 
 // ---------------------------------------------------------------------------
 // small shared helpers
@@ -155,6 +176,7 @@ async function picker(req, res) {
   const collectionId = String(body.collectionId || "").trim();
   const prompt = String(body.prompt || "").trim();
   let count = Math.trunc(Number(body.count));
+  const exclude = parseExcludeIds(body.exclude_ids); // Smart Reroll: ids on screen now
 
   if (!collectionId) badRequest("collectionId is required");
   if (!prompt) badRequest("prompt is required");
@@ -184,6 +206,11 @@ async function picker(req, res) {
     "Only choose from the provided list — never invent titles.",
     "When several movies fit the request well, vary your selection so repeat",
     `requests surface different good picks. Variation token: ${variationToken}.`,
+    // Soft-avoid the on-screen ids so a reroll feels fresh; the post-filter below is
+    // the real guard (this just biases the model when there's room to comply).
+    exclude.size
+      ? `Prefer NOT to pick these movieIds (already shown): ${[...exclude].join(", ")}.`
+      : "",
     'Respond with ONLY a JSON array of objects with this exact shape:',
     '[{ "movieId": <number, the id field from the list>, "reason": "<one short sentence>" }]',
     "No prose, no markdown, no code fences — just the JSON array.",
@@ -201,17 +228,25 @@ async function picker(req, res) {
   const docs = await Movie.find({ _id: { $in: movies.map((m) => m.id) } }).lean();
   const byId = new Map(docs.map((d) => [d._id, d]));
 
+  // De-dupe by id (seen) AND split into fresh vs. on-screen so the soft reroll can
+  // prefer fresh picks but still fall back if there aren't enough.
   const seen = new Set();
-  const data = [];
+  const preferred = []; // ids NOT currently on screen
+  const fallback = []; // excluded ids, used only to top up to `count`
   for (const pick of picks) {
     const id = Math.trunc(Number(pick && pick.movieId));
     if (!Number.isFinite(id) || seen.has(id)) continue;
     const doc = byId.get(id);
-    if (!doc) continue; // not in the collection — ignore
+    if (!doc) continue; // not in the collection — ignore (guards hallucinated ids)
     seen.add(id);
-    data.push(movieCardFromDoc(doc, String((pick && pick.reason) || "")));
-    if (data.length >= count) break;
+    const card = movieCardFromDoc(doc, String((pick && pick.reason) || ""));
+    (exclude.has(id) ? fallback : preferred).push(card);
   }
+
+  // Crucial fallback: fill from fresh picks first, then top up with excluded ones
+  // only if we'd otherwise come up short — never return empty/short cards just
+  // because the best matches happen to be the ones already on screen.
+  const data = [...preferred, ...fallback].slice(0, count);
 
   res.json({ ok: true, data });
 }
@@ -225,6 +260,7 @@ async function picker(req, res) {
 async function search(req, res) {
   const query = String((req.body && req.body.query) || "").trim();
   if (!query) badRequest("query is required");
+  const exclude = parseExcludeIds(req.body && req.body.exclude_ids); // Smart Reroll
 
   const aiPrompt = [
     "You are a movie search engine. For the request below, list the most",
@@ -241,7 +277,13 @@ async function search(req, res) {
 
   // Return the raw TMDB record (the client's normaliser handles this shape, same as
   // the movie feed). No `reason` here — AI Search is a results grid, not picks.
-  const data = await resolveSuggestions(suggestions, (_rec, movie) => movie);
+  // resolveSuggestions already de-dupes by TMDB id.
+  const resolved = await resolveSuggestions(suggestions, (_rec, movie) => movie);
+
+  // Smart Reroll soft filter: drop ids already on screen, but fall back to the full
+  // set if doing so would leave too few results (the "crucial fallback").
+  const fresh = resolved.filter((m) => !exclude.has(m.id));
+  const data = fresh.length >= MIN_AFTER_EXCLUDE ? fresh : resolved;
 
   res.json({ ok: true, data });
 }
@@ -287,4 +329,46 @@ async function enhance(req, res) {
   res.json({ ok: true, data });
 }
 
-module.exports = { picker, search, enhance };
+// ===========================================================================
+// Endpoint 4 — GET/PUT /api/ai/session  (AI Picker session save/load)
+// The client owns the session SHAPE (last prompt, suggested ids, reroll state…);
+// the server validates it's a JSON object and stores it verbatim on the user doc,
+// returning it byte-for-byte. One active session per user. Both are requireAuth-
+// gated, so req.user is the live user document (aiSession included).
+// ===========================================================================
+
+// GET /api/ai/session — the caller's saved session, or null if none.
+async function getSession(req, res) {
+  const session = req.user.aiSession ?? null;
+  res.json({ ok: true, data: { session } });
+}
+
+// PUT /api/ai/session — save (or clear) the caller's session. Body: { session }.
+//   • session: a plain JSON object  → saved verbatim.
+//   • session: null                 → clears the saved session.
+// Anything else (array, string, number, missing) is a 400 — this is exactly the
+// validation gap that made the frontend's load fail (a malformed save round-tripped
+// as garbage). We store via updateOne (Mixed is reliably persisted that way).
+async function saveSession(req, res) {
+  const body = req.body || {};
+  if (!("session" in body)) badRequest("session is required");
+
+  const session = body.session;
+  const isClear = session === null;
+  const isObject =
+    typeof session === "object" && session !== null && !Array.isArray(session);
+  if (!isClear && !isObject) {
+    badRequest("session must be a JSON object, or null to clear it");
+  }
+
+  // Guard against an oversized blob bloating the user doc.
+  if (isObject && JSON.stringify(session).length > MAX_AI_SESSION_BYTES) {
+    badRequest("session is too large");
+  }
+
+  await User.updateOne({ _id: req.user._id }, { $set: { aiSession: session } });
+
+  res.json({ ok: true, data: { saved: true, session } });
+}
+
+module.exports = { picker, search, enhance, getSession, saveSession };

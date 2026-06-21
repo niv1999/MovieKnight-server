@@ -132,6 +132,16 @@ async function search(req, res) {
   const q = String(req.query.q || "").trim();
   const sort = SORTERS[req.query.sort] ? req.query.sort : DEFAULT_SORT;
   const page = clampPage(req.query.page);
+
+  // Theme search (?keyword=heist): served entirely from our own `movies` cache,
+  // because keywords are OUR normalized strings — TMDB's /discover can't match
+  // them by name. This is a distinct path from the TMDB-backed feed below, so it
+  // returns early. Empty -> [] (no themed titles cached yet).
+  const keyword = String(req.query.keyword || "").trim();
+  if (keyword) {
+    const data = await movieCache.searchByKeyword(keyword, page);
+    return res.json({ ok: true, data });
+  }
   // genre may be a single id or a comma/pipe-joined multi-id (e.g. "28,12").
   // Parse to a numeric list. Number("28,12") is NaN, which silently blanked the
   // grid (genre_ids.includes(NaN) is always false) — so split first. Multi-genre
@@ -148,6 +158,16 @@ async function search(req, res) {
   const language = req.query.language ? String(req.query.language).trim() : null;
   const withCast = req.query.with_cast ? String(req.query.with_cast) : null;
   const withCrew = req.query.with_crew ? String(req.query.with_crew) : null;
+  // Streaming-provider filter. Accept `providers` or `with_watch_providers`, single
+  // or comma/pipe-joined ids (e.g. "8,9"). OR semantics ("on Netflix OR Disney+"),
+  // which TMDB expresses with "|". with_watch_providers is IGNORED by TMDB unless a
+  // watch_region accompanies it — omitting the region is why provider filtering
+  // silently returned everything/"unavailable". Default the region to US.
+  const providerIds = String(req.query.providers || req.query.with_watch_providers || "")
+    .split(/[,|]/)
+    .map((s) => parseInt(s.trim(), 10))
+    .filter(Number.isFinite);
+  const watchRegion = String(req.query.watch_region || "US").trim().toUpperCase() || "US";
 
   // Fingerprint the request for the feed cache. genre is kept as its RAW query
   // string (it may be a comma-joined multi-id like "28,12"); the rest are the
@@ -167,12 +187,16 @@ async function search(req, res) {
     language,
     with_cast: withCast,
     with_crew: withCrew,
+    providers: providerIds.length ? providerIds.join("|") : null,
+    watch_region: providerIds.length ? watchRegion : null,
   };
 
   // The real TMDB fetch — only runs on a cache miss (or when Mongo is unavailable).
   const fetchFromTmdb = async () => {
-    // Free-text search (no person filter): /search/movie, page forwarded 1:1.
-    if (q && !withCast && !withCrew) {
+    // Free-text search (no person/provider filter): /search/movie, page 1:1.
+    // with_cast/with_crew/with_watch_providers are /discover-only, so when any is
+    // present we must take the /discover path (and re-apply the title match below).
+    if (q && !withCast && !withCrew && !providerIds.length) {
       return searchByText(q, page, {
         genreIds, yearFrom, yearTo, minRating, minVotes, language, sort,
       });
@@ -196,13 +220,17 @@ async function search(req, res) {
     if (language !== null) params.with_original_language = language;
     if (withCast) params.with_cast = withCast;
     if (withCrew) params.with_crew = withCrew;
+    if (providerIds.length) {
+      params.with_watch_providers = providerIds.join("|"); // "|" = OR (any provider)
+      params.watch_region = watchRegion; // REQUIRED — TMDB ignores providers without it
+    }
 
     const tmdbData = await tmdb("/discover/movie", params);
     let results = tmdbData.results || [];
 
-    // /discover can't honor free text, so when a person filter is combined with a
-    // title query, match the title server-side on the person-filtered page.
-    if (q && (withCast || withCrew)) {
+    // /discover can't honor free text, so when a person/provider filter is combined
+    // with a title query, match the title server-side on the filtered page.
+    if (q && (withCast || withCrew || providerIds.length)) {
       const needle = q.toLowerCase();
       results = results.filter((m) => String(m.title || "").toLowerCase().includes(needle));
     }
@@ -259,6 +287,11 @@ function buildDetailPayload(movie) {
     cast: ((movie.credits && movie.credits.cast) || [])
       .slice(0, 4)
       .map((c) => c.name),
+    // TMDB append_to_response=keywords nests them under `keywords.keywords`
+    // ([{ id, name }]). Lowercase so DB theme search is case-insensitive.
+    keywords: ((movie.keywords && movie.keywords.keywords) || [])
+      .map((k) => String((k && k.name) || "").trim().toLowerCase())
+      .filter(Boolean),
     trailerKey: trailer ? trailer.key : null,
   };
 }
@@ -282,7 +315,7 @@ async function details(req, res) {
   if (cached) return res.json({ ok: true, data: cached });
 
   const movie = await tmdb(`/movie/${id}`, {
-    append_to_response: "credits,videos",
+    append_to_response: "credits,videos,keywords",
   });
   const payload = buildDetailPayload(movie);
 

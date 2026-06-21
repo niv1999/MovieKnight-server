@@ -16,7 +16,7 @@
 const Collection = require("../models/Collection");
 const Movie = require("../models/Movie");
 const User = require("../models/User");
-const { tmdb } = require("../services/tmdb");
+const { tmdb, clampPage } = require("../services/tmdb");
 const { dbReady } = require("../services/movieCache");
 
 const MAX_NAME = 60; // collection title cap
@@ -153,13 +153,19 @@ async function postersFor(movieIds) {
 // but never blocks the add.
 async function hydrateMovieOnAdd(tmdbId) {
   const movie = await tmdb(`/movie/${tmdbId}`, {
-    append_to_response: "watch/providers",
+    append_to_response: "watch/providers,keywords",
   }); // throws (e.g. 404) on a bad id
 
   // TMDB /movie/:id returns genres as [{ id, name }] — collapse to ids.
   const genre_ids = Array.isArray(movie.genres)
     ? movie.genres.map((g) => g && g.id).filter((id) => Number.isFinite(id))
     : [];
+
+  // Theme keywords nest under "keywords.keywords" ([{ id, name }]); store the names
+  // lowercased so the `movies` cache is theme-searchable (GET /movies/search?keyword=).
+  const keywords = ((movie.keywords && movie.keywords.keywords) || [])
+    .map((k) => String((k && k.name) || "").trim().toLowerCase())
+    .filter(Boolean);
 
   // append_to_response nests the providers under the literal "watch/providers" key.
   // Default region US; flatrate = the streaming (subscription) tier the filter uses.
@@ -187,6 +193,7 @@ async function hydrateMovieOnAdd(tmdbId) {
             overview: movie.overview || "",
             rating: movie.vote_average ?? null,
             popularity: movie.popularity ?? null,
+            keywords,
             lastUpdated: new Date(),
           },
           $setOnInsert: { fullDetails: false },
@@ -532,6 +539,66 @@ async function saveWheel(req, res) {
   });
 }
 
+// Parse a "?genres=28,12" / "?providers=8|9" query value into a numeric id list.
+// Accepts comma- OR pipe-separated ids and drops anything non-numeric.
+function parseIdList(raw) {
+  return String(raw || "")
+    .split(/[,|]/)
+    .map((s) => parseInt(s.trim(), 10))
+    .filter(Number.isFinite);
+}
+
+// A raw TMDB /discover list result -> the compact card the wheel UI renders.
+function discoverToCard(m) {
+  return {
+    id: m.id,
+    title: m.title || m.original_title || "",
+    poster_path: m.poster_path || null,
+    vote_average: m.vote_average ?? null,
+    release_date: m.release_date || "",
+    releaseYear: m.release_date ? Number(String(m.release_date).slice(0, 4)) || null : null,
+  };
+}
+
+// GET /api/collections/:id/wheel/options — build a pool of movies for the wheel
+// from TMDB /discover, filtered by genre + streaming provider. Query params:
+//   ?genres=28,12         genre ids   (OR — "Action OR Adventure")
+//   ?providers=8,9        provider ids (OR — "Netflix OR Disney+")
+//   ?watch_region=US      defaults to US; REQUIRED by TMDB for provider filtering
+//   ?page=1               forwarded 1:1 to TMDB
+// Visibility follows getWheel (owner, or any PUBLIC collection). The collection
+// only scopes WHO can spin; the pool itself is fresh from TMDB, not the items[].
+async function wheelOptions(req, res) {
+  const collection = await findOr404(req.params.id);
+
+  const isOwner = !!req.user && collection.userId.equals(req.user._id);
+  if (!collection.isPublic && !isOwner) {
+    const err = new Error("Collection not found"); // don't leak a private collection
+    err.status = 404;
+    throw err;
+  }
+
+  const genreIds = parseIdList(req.query.genres || req.query.with_genres);
+  const providerIds = parseIdList(req.query.providers || req.query.with_watch_providers);
+  const watchRegion = String(req.query.watch_region || "US").trim().toUpperCase() || "US";
+
+  const params = {
+    include_adult: "false",
+    sort_by: "popularity.desc",
+    page: clampPage(req.query.page),
+  };
+  if (genreIds.length) params.with_genres = genreIds.join("|"); // "|" = OR in TMDB
+  if (providerIds.length) {
+    params.with_watch_providers = providerIds.join("|"); // "|" = OR (any provider)
+    params.watch_region = watchRegion; // REQUIRED — TMDB ignores providers without it
+  }
+
+  const tmdbData = await tmdb("/discover/movie", params);
+  const data = (tmdbData.results || []).map(discoverToCard);
+
+  res.json({ ok: true, data });
+}
+
 module.exports = {
   listMine,
   create,
@@ -542,6 +609,7 @@ module.exports = {
   removeMovie,
   getWheel,
   saveWheel,
+  wheelOptions,
   // Shared with the AI controller (controllers/aiController.js) so the
   // ownership / 404-not-403 rules live in exactly one place.
   findOr404,

@@ -109,6 +109,7 @@ function docToDetail(doc) {
     genres: Array.isArray(doc.genres) ? doc.genres : [],
     director: doc.director || "",
     cast: Array.isArray(doc.cast) ? doc.cast : [],
+    keywords: Array.isArray(doc.keywords) ? doc.keywords : [],
     trailerKey: doc.trailerKey || null,
   };
 }
@@ -255,6 +256,7 @@ async function saveDetail(id, movie, payload) {
           director: payload.director,
           cast: payload.cast,
           genres: payload.genres,
+          keywords: Array.isArray(payload.keywords) ? payload.keywords : [],
           trailerKey: payload.trailerKey,
           fullDetails: true,
           lastUpdated: new Date(),
@@ -265,6 +267,29 @@ async function saveDetail(id, movie, payload) {
   } catch (err) {
     console.error("⚠️  detail cache write failed:", err.message);
   }
+}
+
+// --- keyword (theme) search ----------------------------------------------------
+
+// Search the `movies` cache by a stored theme keyword (Task: MongoDB keywords).
+// This is a DB-only query — keywords are our own normalized strings (lowercased),
+// not something TMDB's /discover understands by name — so it never hits TMDB.
+// Returns TMDB-shaped list results (same shape as a feed hit) so the client's
+// existing normaliser handles them, an empty array on no match, and [] when the
+// DB is unavailable (the caller can decide what an empty DB-search means).
+// `page` is 1-based; `limit` caps page size. Sorted by popularity (desc) so the
+// most relevant themed titles surface first.
+async function searchByKeyword(keyword, page = 1, limit = 20) {
+  if (!dbReady()) return [];
+  const kw = String(keyword || "").trim().toLowerCase();
+  if (!kw) return [];
+  const skip = Math.max(0, (Math.max(1, page) - 1) * limit);
+  const docs = await Movie.find({ keywords: kw })
+    .sort({ popularity: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
+  return docs.map(docToResult);
 }
 
 // --- cache visibility (dev/QA) -------------------------------------------------
@@ -313,5 +338,6 @@ module.exports = {
   getFeed,
   getCachedDetail,
   saveDetail,
+  searchByKeyword,
   getStats,
 };

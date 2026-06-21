@@ -25,6 +25,10 @@ const userSchema = new mongoose.Schema(
     // Earned progression badges. Empty for normal users (profile shows the empty
     // dashed shields); the Yuviverse7 demo user is seeded with three.
     badges: { type: [badgeSchema], default: [] },
+    // Persisted "AI Picker" session blob (GET/PUT /api/ai/session). Mixed because
+    // the client owns the shape (last prompt, suggested ids, reroll count, etc.);
+    // the server stores/returns it verbatim. null = no saved session.
+    aiSession: { type: mongoose.Schema.Types.Mixed, default: null },
     createdAt: { type: Date, default: Date.now },
   },
   { collection: "users" }
