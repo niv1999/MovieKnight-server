@@ -31,8 +31,5 @@ router.delete(
 // is owner-only (enforced in the controller).
 router.get("/collections/:id/wheel", requireAuth, route(collections.getWheel));
 router.put("/collections/:id/wheel", requireAuth, route(collections.saveWheel));
-// Build a filtered movie pool for the wheel (genre + streaming provider, via TMDB).
-// Declared before nothing conflicting; literal segment so no param clash.
-router.get("/collections/:id/wheel/options", requireAuth, route(collections.wheelOptions));
 
 module.exports = router;
