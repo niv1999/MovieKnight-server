@@ -17,7 +17,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 // newer/faster model. gemini-2.5-flash is fast, cheap, and supports JSON mode.
 // (The retired gemini-1.5-* models 404 on current API keys — verify a model is in
 // `GET /v1beta/models` for your key before pinning it here.)
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
 
 // Hard ceiling on a single generateContent call. The SDK won't abort the socket
 // for us, so we race the request against a timer (withTimeout) and surface a 504
