@@ -5,7 +5,7 @@
 - **Auth:** protected routes require `Authorization: Bearer <token>`
 
 > Source of truth for both lanes. **Any change → post in `#api-contract` with @mention BEFORE merging.**
-> **Auth, Users, Movies, Collections, and AI are all live** (see the tables below). **Wheel** has **no server endpoint** — the Spin-the-Wheel state currently persists client-side in `localStorage` (the `collections.savedWheel` field is reserved but unused).
+> **Auth, Users, Movies, Collections, Wheel, and AI are all live** (see the tables below).
 
 ## Client screens ↔ API map
 
@@ -22,7 +22,7 @@ The client is a **static multi-page app** (separate `.html` files, params via qu
 | `/profile/:userId/collections/:collectionId` | `collection.html?id=` | `GET /api/collections/:id` | ✅ wired |
 | `…/collections/:collectionId/add-movie` | Add-to-Collection modal | `POST /api/collections/:id/movies` | ✅ wired |
 | `…/collections/:collectionId/picker` | `picker.html?collection=` | `GET /api/collections/:id` | ✅ wired |
-| `…/picker/wheel` | `wheel.html?collection=` | — (client-side `localStorage`) | ⛔ no server endpoint |
+| `…/picker/wheel` | `wheel.html?collection=` | `GET/PUT /api/collections/:id/wheel` | ✅ wired |
 | `…/picker/let-ai-choose` | `picker.html` (AI mode) | `POST /api/ai/picker` | ✅ wired |
 | `/search` (AI) | search UI / modal | `POST /api/ai/search` | ✅ wired |
 | `…/collections/:collectionId/enhance` | *(TODO page)* | `POST /api/ai/enhance/:id` | ✅ backend ready, FE TODO |
@@ -101,8 +101,14 @@ Deferred routes implied by the map but **not** yet in the tables below: `GET /ap
 - **Default lists** (`isDefault:true`) can't be **renamed** or **deleted** (`400`), but their **visibility can** be toggled. `POST /:id/movies` is **idempotent** (re-adding a movie is a no-op) and warms the `movies` cache so the cover/grid always has a poster.
 - **`likesCount` / `savesCount`** are **stubbed at 0** — like/save storage is deferred (Explore). Browsing *other* users' public lists (an Explore feed) has **no endpoint yet** — it needs its own paginated route.
 
-## Wheel (Spin the Wheel persistence) — ⛔ no server endpoint
-There is **no** `/api/collections/:id/wheel` route. The Spin-the-Wheel state persists **client-side in `localStorage`**; the `collections.savedWheel` field (`[String]`) is reserved for a future server-side pass but nothing reads or writes it yet.
+## Wheel (Spin the Wheel persistence) — ✅ implemented
+| Method | Path | Body | Returns (`data`) | Auth |
+|---|---|---|---|---|
+| GET | `/api/collections/:id/wheel` | — | `{ wheelConfig: [string] }` | Bearer |
+| PUT | `/api/collections/:id/wheel` | `{ wheelConfig: [...] }` | `{ saved:true, wheelConfig }` | Bearer |
+
+- `wheelConfig` is stored as the embedded `collection.savedWheel` (`[String]`). PUT also accepts a `savedWheel` key or a bare array body, and tolerates numbers / TMDB movie objects (coerced to `title`/`name`/`id`); entries are trimmed, empties dropped, capped at 100.
+- **GET** follows the same visibility as `GET /api/collections/:id` (owner, or a PUBLIC collection); **PUT** is owner-only. A private/foreign collection is `404` (existence not leaked).
 
 ## AI (Gemini-backed, Bearer)  ✅ implemented
 Three AI features powered by Google Gemini (`@google/generative-ai`, model `gemini-2.5-flash`). All are **login-gated** (Bearer). Gemini is configured for **JSON-only** output (`responseMimeType: "application/json"` + a strict per-feature schema prompt), so responses are pure parseable JSON — never markdown/prose. Gemini only **ranks/suggests**; every returned record is re-resolved server-side against our own data (collection movies for the picker, TMDB for search/enhance), so the API never returns titles the model invented.

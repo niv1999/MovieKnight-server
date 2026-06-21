@@ -27,4 +27,9 @@ router.delete(
   route(collections.removeMovie)
 );
 
+// Spin the Wheel persistence. GET is viewable (owner or a PUBLIC collection); PUT
+// is owner-only (enforced in the controller).
+router.get("/collections/:id/wheel", requireAuth, route(collections.getWheel));
+router.put("/collections/:id/wheel", requireAuth, route(collections.saveWheel));
+
 module.exports = router;

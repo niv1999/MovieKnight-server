@@ -419,6 +419,83 @@ async function respondFull(collection, req, res) {
   });
 }
 
+// ===========================================================================
+// Wheel persistence (Spin the Wheel) — GET/PUT /api/collections/:id/wheel.
+// The wheel config is the embedded collection.savedWheel ([String]); the client
+// persists its wheel as a plain array of strings (titles / free-form entries), so
+// we store it byte-for-byte. GET follows the same visibility rule as getOne (owner
+// or a PUBLIC collection); PUT is owner-only — only the owner edits their wheel.
+// ===========================================================================
+
+const MAX_WHEEL_ITEMS = 100; // a wheel that large is already unusable; this caps abuse
+
+// Normalise an incoming wheel array to [String] (the stored shape). Accepts the
+// client's string entries as-is, and also tolerates numbers (TMDB ids) or objects
+// (TMDB movie objects → prefer title/name/id) so the endpoint matches an
+// "array of TMDB movie objects/IDs" payload without changing the storage model.
+function cleanWheel(raw) {
+  if (!Array.isArray(raw)) {
+    const err = new Error("wheelConfig must be an array");
+    err.status = 400;
+    throw err;
+  }
+  return raw
+    .map((entry) => {
+      if (entry == null) return "";
+      if (typeof entry === "object") {
+        return String(entry.title ?? entry.name ?? entry.id ?? "").trim();
+      }
+      return String(entry).trim();
+    })
+    .filter(Boolean)
+    .slice(0, MAX_WHEEL_ITEMS);
+}
+
+// GET /api/collections/:id/wheel — the saved wheel config for a viewable collection.
+async function getWheel(req, res) {
+  const collection = await findOr404(req.params.id);
+
+  const isOwner = !!req.user && collection.userId.equals(req.user._id);
+  if (!collection.isPublic && !isOwner) {
+    const err = new Error("Collection not found"); // don't leak a private collection
+    err.status = 404;
+    throw err;
+  }
+
+  res.json({ ok: true, data: { wheelConfig: collection.savedWheel || [] } });
+}
+
+// PUT /api/collections/:id/wheel — owner only. Body: { wheelConfig: [...] }.
+async function saveWheel(req, res) {
+  const collection = await findOr404(req.params.id);
+  assertOwner(collection, req);
+
+  const body = req.body || {};
+  // Accept { wheelConfig }, { savedWheel }, or a bare array body.
+  const incoming =
+    body.wheelConfig !== undefined
+      ? body.wheelConfig
+      : body.savedWheel !== undefined
+      ? body.savedWheel
+      : Array.isArray(body)
+      ? body
+      : undefined;
+
+  if (incoming === undefined) {
+    const err = new Error("wheelConfig is required");
+    err.status = 400;
+    throw err;
+  }
+
+  collection.savedWheel = cleanWheel(incoming);
+  await collection.save();
+
+  res.json({
+    ok: true,
+    data: { saved: true, wheelConfig: collection.savedWheel },
+  });
+}
+
 module.exports = {
   listMine,
   create,
@@ -427,6 +504,8 @@ module.exports = {
   remove,
   addMovie,
   removeMovie,
+  getWheel,
+  saveWheel,
   // Shared with the AI controller (controllers/aiController.js) so the
   // ownership / 404-not-403 rules live in exactly one place.
   findOr404,
