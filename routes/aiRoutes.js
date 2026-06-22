@@ -14,6 +14,9 @@ router.post("/picker", requireAuth, route(ai.picker)); //   "Let AI Choose"
 router.post("/search", requireAuth, route(ai.search)); //   "AI Search"
 router.post("/enhance/:id", requireAuth, route(ai.enhance)); // "Enhance Collection"
 
+// Daily AI quota status ({ used, remaining, limit }) for the header menu badge.
+router.get("/usage", requireAuth, route(ai.getUsage));
+
 // AI Picker session save/load (one active session per user, stored on the user doc).
 router.get("/session", requireAuth, route(ai.getSession));
 router.put("/session", requireAuth, route(ai.saveSession));

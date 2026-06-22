@@ -99,8 +99,13 @@ app.use((err, req, res, next) => {
   const status = err.status || 500;
   if (status >= 500) console.error(err);
   const message = err.status ? err.message || "Server error" : "Server error";
+  // Surface a machine-readable `code` only for deliberate errors (those with a
+  // status) that set one — lets the client distinguish same-status cases, e.g. a
+  // quota 429 (AI_LIMIT_REACHED) from an upstream rate-limit 429. Never leak a code
+  // from an unexpected 500 (no status), which could expose internals.
+  const code = err.status && err.code ? err.code : undefined;
   if (req.originalUrl.startsWith("/api/")) {
-    return res.status(status).json({ ok: false, error: message });
+    return res.status(status).json({ ok: false, error: message, ...(code && { code }) });
   }
   res.status(status).json({ error: message });
 });

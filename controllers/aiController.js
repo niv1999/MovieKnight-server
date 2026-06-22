@@ -16,6 +16,7 @@ const { tmdb } = require("../services/tmdb");
 const { dbReady } = require("../services/movieCache");
 const { generateJsonArray } = require("../services/gemini");
 const { findOr404, assertOwner } = require("./collectionController");
+const { aiUsageFor, consumeAiAction, aiLimitError } = require("../services/aiQuota");
 
 // Caps that keep us inside free-tier limits and bound the work per request.
 const MAX_PICK = 3; // "Let AI Choose" returns at most this many
@@ -52,6 +53,14 @@ function badRequest(message) {
   const err = new Error(message);
   err.status = 400;
   throw err;
+}
+
+// Throw a 429 if the signed-in user has spent all their AI actions for today. Each
+// AI feature calls this BEFORE the (slow, quota-limited) Gemini work so an
+// over-limit request fails fast; the action itself is only spent — via
+// consumeAiAction() — once the work succeeds, so an upstream failure costs nothing.
+function assertAiActionAvailable(req) {
+  if (aiUsageFor(req.user).remaining <= 0) throw aiLimitError();
 }
 
 // Fisher–Yates shuffle (returns a new array; never mutates the input). Used to
@@ -183,6 +192,8 @@ async function picker(req, res) {
   if (!Number.isFinite(count) || count < 1) count = 1;
   count = Math.min(count, MAX_PICK); // hard cap 1..3
 
+  assertAiActionAvailable(req); // daily quota gate (spend happens on success below)
+
   const collection = await loadOwnedCollection(collectionId, req);
   const movies = await collectionMoviesForAi(collection);
   if (!movies.length) {
@@ -248,7 +259,8 @@ async function picker(req, res) {
   // because the best matches happen to be the ones already on screen.
   const data = [...preferred, ...fallback].slice(0, count);
 
-  res.json({ ok: true, data });
+  const aiUsage = await consumeAiAction(req.user); // spend one action (incl. rerolls)
+  res.json({ ok: true, data, aiUsage });
 }
 
 // ===========================================================================
@@ -260,6 +272,7 @@ async function picker(req, res) {
 async function search(req, res) {
   const query = String((req.body && req.body.query) || "").trim();
   if (!query) badRequest("query is required");
+  assertAiActionAvailable(req); // daily quota gate (spend happens on success below)
   const exclude = parseExcludeIds(req.body && req.body.exclude_ids); // Smart Reroll
 
   const aiPrompt = [
@@ -285,7 +298,8 @@ async function search(req, res) {
   const fresh = resolved.filter((m) => !exclude.has(m.id));
   const data = fresh.length >= MIN_AFTER_EXCLUDE ? fresh : resolved;
 
-  res.json({ ok: true, data });
+  const aiUsage = await consumeAiAction(req.user); // spend one action (incl. rerolls)
+  res.json({ ok: true, data, aiUsage });
 }
 
 // ===========================================================================
@@ -294,6 +308,7 @@ async function search(req, res) {
 // fit its taste, each with a reason. (Frontend lands later; endpoint ready now.)
 // ===========================================================================
 async function enhance(req, res) {
+  assertAiActionAvailable(req); // daily quota gate (spend happens on success below)
   const collection = await loadOwnedCollection(req.params.id, req);
   const movies = await collectionMoviesForAi(collection);
 
@@ -326,7 +341,8 @@ async function enhance(req, res) {
   }));
   data = data.filter((m) => !existingIds.has(m.id));
 
-  res.json({ ok: true, data });
+  const aiUsage = await consumeAiAction(req.user); // spend one action
+  res.json({ ok: true, data, aiUsage });
 }
 
 // ===========================================================================
@@ -371,4 +387,13 @@ async function saveSession(req, res) {
   res.json({ ok: true, data: { saved: true, session } });
 }
 
-module.exports = { picker, search, enhance, getSession, saveSession };
+// ===========================================================================
+// Endpoint 5 — GET /api/ai/usage  (daily quota status)
+// The client reads this to render the "AI Actions remaining" line in the header
+// menu and to refresh it after each action. Pure read (applies the lazy reset).
+// ===========================================================================
+async function getUsage(req, res) {
+  res.json({ ok: true, data: aiUsageFor(req.user) });
+}
+
+module.exports = { picker, search, enhance, getSession, saveSession, getUsage };

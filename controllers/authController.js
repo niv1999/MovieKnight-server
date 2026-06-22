@@ -8,6 +8,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const Collection = require("../models/Collection");
+const { aiUsageFor } = require("../services/aiQuota");
 
 const BCRYPT_ROUNDS = 10;
 const TOKEN_TTL = "7d";
@@ -28,6 +29,9 @@ function publicUser(user) {
     avatarUrl: user.avatarUrl || null,
     countryCode: user.countryCode || null,
     badges: Array.isArray(user.badges) ? user.badges : [],
+    // Daily AI quota ({ used, remaining, limit }) so login/signup/me carry it and
+    // the header menu can render the badge from the cached user (no extra request).
+    aiUsage: aiUsageFor(user),
     createdAt: user.createdAt,
   };
 }
