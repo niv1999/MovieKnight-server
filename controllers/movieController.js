@@ -86,6 +86,27 @@ const SORT_BY = {
 // don't dominate. Only applied when the caller didn't set their own minVotes.
 const RATING_SORT_VOTE_FLOOR = 50;
 
+// Look up a movie's certification (age rating) for a given country via TMDB
+// /movie/{id}/release_dates. The /search/movie result objects don't carry a
+// certification, so the text-search path has to fetch it per title to filter on
+// it. Returns "" when that country publishes no certification for the movie (so
+// such titles are excluded by an exact-match filter, like an undated title is by
+// a year range). A failed lookup is treated as "" rather than failing the search.
+async function fetchCertification(movieId, country) {
+  let data;
+  try {
+    data = await tmdb(`/movie/${movieId}/release_dates`);
+  } catch (_) {
+    return ""; // a single bad lookup shouldn't sink the whole page
+  }
+  const entry = (data.results || []).find((r) => r.iso_3166_1 === country);
+  if (!entry) return "";
+  // A country can list several release types (theatrical, digital, ...); take the
+  // first entry that actually carries a certification.
+  const rated = (entry.release_dates || []).find((d) => d.certification);
+  return rated ? rated.certification : "";
+}
+
 // Free-text search via TMDB /search/movie. That endpoint can't honor discover
 // filters or sort_by, so we re-apply the filters server-side and sort within the
 // page. `page` is forwarded 1:1 to TMDB, so pages stay full as the user scrolls
@@ -111,6 +132,15 @@ const searchByText = async (q, page, f) => {
   if (f.minRating !== null) results = results.filter((m) => (m.vote_average || 0) >= f.minRating);
   if (f.minVotes !== null) results = results.filter((m) => (m.vote_count || 0) >= f.minVotes);
   if (f.language !== null) results = results.filter((m) => m.original_language === f.language);
+  // Certification isn't on the search payload, so it must be looked up per title.
+  // Apply it LAST — after the cheap in-memory filters above have narrowed the page
+  // — so we issue the fewest /release_dates calls. The lookups run concurrently.
+  if (f.certification !== null) {
+    const certs = await Promise.all(
+      results.map((m) => fetchCertification(m.id, f.certificationCountry)),
+    );
+    results = results.filter((_, i) => certs[i] === f.certification);
+  }
   results.sort(SORTERS[f.sort]); // /search/movie can't sort_by — order within the page
   return results;
 };
@@ -159,6 +189,13 @@ async function search(req, res) {
     .map((s) => parseInt(s.trim(), 10))
     .filter(Number.isFinite);
   const watchRegion = String(req.query.watch_region || "US").trim().toUpperCase() || "US";
+  // Age-rating (certification) filter, e.g. "R" or "PG-13". Certifications are
+  // country-specific, so a country is always required; default to US. We only treat
+  // certification as active when a value is actually provided — the country alone
+  // filters nothing.
+  const certification = req.query.certification ? String(req.query.certification).trim() : null;
+  const certificationCountry =
+    String(req.query.certification_country || "US").trim().toUpperCase() || "US";
 
   // Fingerprint the request for the feed cache. genre is kept as its RAW query
   // string (it may be a comma-joined multi-id like "28,12"); the rest are the
@@ -180,6 +217,8 @@ async function search(req, res) {
     with_crew: withCrew,
     providers: providerIds.length ? providerIds.join("|") : null,
     watch_region: providerIds.length ? watchRegion : null,
+    certification,
+    certification_country: certification ? certificationCountry : null,
   };
 
   // The real TMDB fetch — only runs on a cache miss (or when Mongo is unavailable).
@@ -190,6 +229,7 @@ async function search(req, res) {
     if (q && !withCast && !withCrew && !providerIds.length) {
       return searchByText(q, page, {
         genreIds, yearFrom, yearTo, minRating, minVotes, language, sort,
+        certification, certificationCountry,
       });
     }
 
@@ -214,6 +254,10 @@ async function search(req, res) {
     if (providerIds.length) {
       params.with_watch_providers = providerIds.join("|"); // "|" = OR (any provider)
       params.watch_region = watchRegion; // REQUIRED — TMDB ignores providers without it
+    }
+    if (certification !== null) {
+      params.certification = certification;
+      params.certification_country = certificationCountry; // REQUIRED — TMDB ignores certification without it
     }
 
     const tmdbData = await tmdb("/discover/movie", params);
