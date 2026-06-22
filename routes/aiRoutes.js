@@ -17,8 +17,4 @@ router.post("/enhance/:id", requireAuth, route(ai.enhance)); // "Enhance Collect
 // Daily AI quota status ({ used, remaining, limit }) for the header menu badge.
 router.get("/usage", requireAuth, route(ai.getUsage));
 
-// AI Picker session save/load (one active session per user, stored on the user doc).
-router.get("/session", requireAuth, route(ai.getSession));
-router.put("/session", requireAuth, route(ai.saveSession));
-
 module.exports = router;

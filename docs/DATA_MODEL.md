@@ -16,7 +16,6 @@ Collection items + the saved wheel are **embedded** inside the collection docume
 | avatarUrl | String | optional |
 | countryCode | String | ISO-3166 alpha-2, optional |
 | badges | `[{ name, tier, subtitle }]` | progression badges — **cosmetic/mock** (dynamic earning is deferred). `tier` ∈ `gold`/`silver`/`bronze` drives the profile shield colour; `subtitle` is the tooltip line. Empty `[]` for normal users (profile shows dashed empty shields); the Yuviverse7 demo user is seeded with three. |
-| aiSession | Mixed | persisted "AI Picker" session blob (`GET`/`PUT /api/ai/session`). The **client** owns the shape (last prompt, suggested ids, reroll state…); the server stores/returns it verbatim. `null` = no saved session. One active session per user. |
 | aiUsage | `{ count: Number, day: String }` | **daily AI-action quota** (see `services/aiQuota.js`). `count` is how many AI actions the user has spent; `day` is the **Pacific calendar day** (`"YYYY-MM-DD"`) that count belongs to. A count stamped with an earlier day is treated as `0` — the **lazy** midnight-Pacific reset (no cron/TTL). The limit (`DAILY_AI_LIMIT = 5`) is backend-owned; `publicUser`/`GET /api/ai/usage` expose the computed `{ used, remaining, limit }`. |
 | createdAt | Date | default now |
 

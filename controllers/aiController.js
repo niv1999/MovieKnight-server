@@ -11,7 +11,6 @@
 //     it never invents the data we return (we re-resolve everything ourselves).
 
 const Movie = require("../models/Movie");
-const User = require("../models/User");
 const { tmdb } = require("../services/tmdb");
 const { dbReady } = require("../services/movieCache");
 const { generateJsonArray } = require("../services/gemini");
@@ -29,7 +28,6 @@ const TMDB_CONCURRENCY = 6; // parallel TMDB lookups when resolving AI titles
 // least this many fresh options remain — below the floor we let excluded ids back
 // in rather than return empty/short cards (the "crucial fallback").
 const MIN_AFTER_EXCLUDE = 3;
-const MAX_AI_SESSION_BYTES = 100_000; // cap a saved AI session blob (abuse guard)
 
 // Coerce a client `exclude_ids` payload (array of numbers/numeric strings) into a
 // Set<number> of TMDB ids. Tolerates junk: non-numeric entries are dropped, a
@@ -346,49 +344,7 @@ async function enhance(req, res) {
 }
 
 // ===========================================================================
-// Endpoint 4 — GET/PUT /api/ai/session  (AI Picker session save/load)
-// The client owns the session SHAPE (last prompt, suggested ids, reroll state…);
-// the server validates it's a JSON object and stores it verbatim on the user doc,
-// returning it byte-for-byte. One active session per user. Both are requireAuth-
-// gated, so req.user is the live user document (aiSession included).
-// ===========================================================================
-
-// GET /api/ai/session — the caller's saved session, or null if none.
-async function getSession(req, res) {
-  const session = req.user.aiSession ?? null;
-  res.json({ ok: true, data: { session } });
-}
-
-// PUT /api/ai/session — save (or clear) the caller's session. Body: { session }.
-//   • session: a plain JSON object  → saved verbatim.
-//   • session: null                 → clears the saved session.
-// Anything else (array, string, number, missing) is a 400 — this is exactly the
-// validation gap that made the frontend's load fail (a malformed save round-tripped
-// as garbage). We store via updateOne (Mixed is reliably persisted that way).
-async function saveSession(req, res) {
-  const body = req.body || {};
-  if (!("session" in body)) badRequest("session is required");
-
-  const session = body.session;
-  const isClear = session === null;
-  const isObject =
-    typeof session === "object" && session !== null && !Array.isArray(session);
-  if (!isClear && !isObject) {
-    badRequest("session must be a JSON object, or null to clear it");
-  }
-
-  // Guard against an oversized blob bloating the user doc.
-  if (isObject && JSON.stringify(session).length > MAX_AI_SESSION_BYTES) {
-    badRequest("session is too large");
-  }
-
-  await User.updateOne({ _id: req.user._id }, { $set: { aiSession: session } });
-
-  res.json({ ok: true, data: { saved: true, session } });
-}
-
-// ===========================================================================
-// Endpoint 5 — GET /api/ai/usage  (daily quota status)
+// Endpoint 4 — GET /api/ai/usage  (daily quota status)
 // The client reads this to render the "AI Actions remaining" line in the header
 // menu and to refresh it after each action. Pure read (applies the lazy reset).
 // ===========================================================================
@@ -396,4 +352,4 @@ async function getUsage(req, res) {
   res.json({ ok: true, data: aiUsageFor(req.user) });
 }
 
-module.exports = { picker, search, enhance, getSession, saveSession, getUsage };
+module.exports = { picker, search, enhance, getUsage };

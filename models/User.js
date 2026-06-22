@@ -25,10 +25,6 @@ const userSchema = new mongoose.Schema(
     // Earned progression badges. Empty for normal users (profile shows the empty
     // dashed shields); the Yuviverse7 demo user is seeded with three.
     badges: { type: [badgeSchema], default: [] },
-    // Persisted "AI Picker" session blob (GET/PUT /api/ai/session). Mixed because
-    // the client owns the shape (last prompt, suggested ids, reroll count, etc.);
-    // the server stores/returns it verbatim. null = no saved session.
-    aiSession: { type: mongoose.Schema.Types.Mixed, default: null },
     // Daily AI quota (see services/aiQuota.js). `day` is the Pacific calendar day
     // ("YYYY-MM-DD") the `count` belongs to; a count stamped with an earlier day is
     // treated as 0 (the lazy midnight-Pacific reset — no cron/TTL involved).
