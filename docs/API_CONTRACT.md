@@ -54,7 +54,7 @@ Deferred routes implied by the map but **not** yet in the tables below: `GET /ap
 ## Movies (TMDB-backed, cached)
 | Method | Path | Query / Params | Returns | Status |
 |---|---|---|---|---|
-| GET | `/api/movies/search` | `q, genre, yearFrom, yearTo, minRating, minVotes, language, with_cast, with_crew, providers, watch_region, keyword, sort, page` | `{ ok:true, data:[movie] }` | ✅ implemented |
+| GET | `/api/movies/search` | `q, genre, yearFrom, yearTo, minRating, minVotes, language, with_cast, with_crew, providers, watch_region, sort, page` | `{ ok:true, data:[movie] }` | ✅ implemented |
 | GET | `/api/movies/random` | — | `{ ok:true, data:{movie} }` | ✅ implemented |
 | GET | `/api/people/search` | `q` | `{ ok:true, data:[{id,name,profile_path,known_for_department}] }` | ✅ implemented |
 | GET | `/api/people/popular` | `page` | `{ ok:true, data:[{id,name,profile_path,known_for_department}] }` — pre-fills actor/director dropdowns; filtered to mostly-English `known_for` (US/Hollywood bias) | ✅ implemented |
@@ -69,13 +69,9 @@ Deferred routes implied by the map but **not** yet in the tables below: `GET /ap
 - **Filters (all TMDB-native on the discover path):** `genre` → `with_genres`, `yearFrom`/`yearTo` → `primary_release_date.gte`/`.lte`, `minRating` → `vote_average.gte`, `minVotes` → `vote_count.gte`, `language` → `with_original_language`. On the free-text path (`q` with no person filter, which uses `/search/movie` and can't honor them), the server re-applies all of these on the page so behavior is identical either way. With a rating sort and no explicit `minVotes`, a default `vote_count.gte` floor of 50 is applied so single-vote titles don't dominate.
 - **Person filters:** `with_cast` / `with_crew` route the query through TMDB `/discover` (which is the only endpoint that supports them). Because `/discover` can't honor free text, when `q` is also supplied the title match is applied server-side on top of the person-filtered results.
 - **Streaming-provider filter:** `providers` (alias `with_watch_providers`) — one or more TMDB watch-provider ids, single or **comma/pipe-joined** (e.g. `8,9`), **OR** semantics ("on Netflix OR Disney+"). Forwarded to TMDB as `with_watch_providers` joined with `|`. **`watch_region` is mandatory for provider filtering** — TMDB silently ignores `with_watch_providers` without it — so the server always sends one, defaulting to `US` (override with `?watch_region=`). Like the person filters, providers route through `/discover` (forced even with free text, with the title match re-applied server-side).
-- **Theme keyword search:** `keyword` (e.g. `?keyword=heist`) — a **DB-only** lookup against the cached `movies.keywords` (our own lowercased TMDB theme keywords; `/discover` can't match them by name). When present it **takes precedence** and is served straight from Mongo (no TMDB call), paged + popularity-sorted, returning the same TMDB-shaped cards. Only movies whose full detail has been fetched (detail view or collection-add) carry keywords yet, so a theme may return few/no results early on — handle an empty array. Returns `[]` when the DB is unavailable.
 - **`sort`** — allowable values: `popularity` *(default)*, `rating_desc`, `rating_asc`, `title_asc`, `title_desc`, `year_desc`, `year_asc`. Unknown/missing → `popularity`. On the discover path the sort is native via TMDB `sort_by` (title → `original_title.*`, year → `primary_release_date.*`). The `/search/movie` text path can't `sort_by`, so there the requested sort only orders within the returned page. Undated titles sort to the bottom on `year_*` and are excluded when a `yearFrom`/`yearTo` range is set.
 - **Pagination:** 20 movies per page via `page`, forwarded **1:1** to the underlying TMDB page (TMDB serves up to page 500). Result sets don't shrink as you scroll; the response is empty only when TMDB itself has no more pages. Nothing is sliced or capped to a fixed pool of source pages.
 - **Response:** `{ ok:true, data:[movie] }` — `data` is the ordered, paged array (raw TMDB movie objects for now; field-reshaping to the `DATA_MODEL` shape is a separate, still-open task).
-
-### `GET /api/movies/:tmdbId` (detail)
-- The detail payload now includes **`keywords: [string]`** — lowercased TMDB theme keywords (fetched via `append_to_response=keywords`), persisted to the `movies` cache and powering the `?keyword=` theme search above. Cached and live-fetched details return the same shape.
 
 ### `GET /api/movies/random`
 - Returns one random non-adult movie via brute-force ID lookup. `{ ok:true, data:{movie} }`.

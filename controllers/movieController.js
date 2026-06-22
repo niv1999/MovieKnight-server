@@ -133,15 +133,6 @@ async function search(req, res) {
   const sort = SORTERS[req.query.sort] ? req.query.sort : DEFAULT_SORT;
   const page = clampPage(req.query.page);
 
-  // Theme search (?keyword=heist): served entirely from our own `movies` cache,
-  // because keywords are OUR normalized strings — TMDB's /discover can't match
-  // them by name. This is a distinct path from the TMDB-backed feed below, so it
-  // returns early. Empty -> [] (no themed titles cached yet).
-  const keyword = String(req.query.keyword || "").trim();
-  if (keyword) {
-    const data = await movieCache.searchByKeyword(keyword, page);
-    return res.json({ ok: true, data });
-  }
   // genre may be a single id or a comma/pipe-joined multi-id (e.g. "28,12").
   // Parse to a numeric list. Number("28,12") is NaN, which silently blanked the
   // grid (genre_ids.includes(NaN) is always false) — so split first. Multi-genre
@@ -287,11 +278,6 @@ function buildDetailPayload(movie) {
     cast: ((movie.credits && movie.credits.cast) || [])
       .slice(0, 4)
       .map((c) => c.name),
-    // TMDB append_to_response=keywords nests them under `keywords.keywords`
-    // ([{ id, name }]). Lowercase so DB theme search is case-insensitive.
-    keywords: ((movie.keywords && movie.keywords.keywords) || [])
-      .map((k) => String((k && k.name) || "").trim().toLowerCase())
-      .filter(Boolean),
     trailerKey: trailer ? trailer.key : null,
   };
 }
@@ -315,7 +301,7 @@ async function details(req, res) {
   if (cached) return res.json({ ok: true, data: cached });
 
   const movie = await tmdb(`/movie/${id}`, {
-    append_to_response: "credits,videos,keywords",
+    append_to_response: "credits,videos",
   });
   const payload = buildDetailPayload(movie);
 

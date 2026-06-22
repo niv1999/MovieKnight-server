@@ -153,19 +153,13 @@ async function postersFor(movieIds) {
 // but never blocks the add.
 async function hydrateMovieOnAdd(tmdbId) {
   const movie = await tmdb(`/movie/${tmdbId}`, {
-    append_to_response: "watch/providers,keywords",
+    append_to_response: "watch/providers",
   }); // throws (e.g. 404) on a bad id
 
   // TMDB /movie/:id returns genres as [{ id, name }] — collapse to ids.
   const genre_ids = Array.isArray(movie.genres)
     ? movie.genres.map((g) => g && g.id).filter((id) => Number.isFinite(id))
     : [];
-
-  // Theme keywords nest under "keywords.keywords" ([{ id, name }]); store the names
-  // lowercased so the `movies` cache is theme-searchable (GET /movies/search?keyword=).
-  const keywords = ((movie.keywords && movie.keywords.keywords) || [])
-    .map((k) => String((k && k.name) || "").trim().toLowerCase())
-    .filter(Boolean);
 
   // append_to_response nests the providers under the literal "watch/providers" key.
   // Default region US; flatrate = the streaming (subscription) tier the filter uses.
@@ -193,7 +187,6 @@ async function hydrateMovieOnAdd(tmdbId) {
             overview: movie.overview || "",
             rating: movie.vote_average ?? null,
             popularity: movie.popularity ?? null,
-            keywords,
             lastUpdated: new Date(),
           },
           $setOnInsert: { fullDetails: false },
