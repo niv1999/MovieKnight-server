@@ -83,6 +83,15 @@ const SORT_BY = {
   year_asc: "primary_release_date.asc",
 };
 
+// "trending" is a feed MODE, not a comparator: it maps to TMDB's /trending/movie/week
+// endpoint — genuinely weekly-trending titles, distinct from `popularity` which is
+// lifetime popularity.desc (the "all-time"/"Most Popular" sort). TMDB only offers
+// day/week trending windows, so there is no separate "all-time trending" — all-time
+// IS `popularity`. /trending accepts no discover filters or sort_by, so like text
+// search it ignores filters and just paginates.
+const TRENDING_SORT = "trending";
+const isValidSort = (s) => Boolean(SORTERS[s]) || s === TRENDING_SORT;
+
 // Default vote floor for rating sorts so a handful of single-vote 10.0 titles
 // don't dominate. Only applied when the caller didn't set their own minVotes.
 const RATING_SORT_VOTE_FLOOR = 50;
@@ -102,11 +111,14 @@ const searchByText = async (q, page) => {
 // /api contract handlers — envelope { ok:true, data } / { ok:false, error }.
 // ===========================================================================
 
-// GET /api/movies/search — movie feed with continuous pagination. Two modes:
+// GET /api/movies/search — movie feed with continuous pagination. Three modes:
 //   • Free-text (q present): TMDB /search/movie, returned by relevance. Sort and
 //     ALL filters are intentionally IGNORED — search is pure text relevance, so the
 //     canonical original ranks above its sequels and typos are tolerated.
-//   • Discover (q empty): /discover/movie with sort + every filter as native params.
+//   • Trending (sort=trending, q empty): TMDB /trending/movie/week — the weekly
+//     trending list. Accepts no discover filters, so filters are ignored here too.
+//   • Discover (q empty, any other sort): /discover/movie with sort + every filter
+//     as native params. sort=popularity is lifetime "all-time" popularity.desc.
 // Params: q, genre, yearFrom, yearTo, minRating, minVotes, language, with_cast,
 // with_crew, providers, certification, sort (default popularity), page.
 //
@@ -115,7 +127,7 @@ const searchByText = async (q, page) => {
 // itself runs out of pages.
 async function search(req, res) {
   const q = String(req.query.q || "").trim();
-  const sort = SORTERS[req.query.sort] ? req.query.sort : DEFAULT_SORT;
+  const sort = isValidSort(req.query.sort) ? req.query.sort : DEFAULT_SORT;
   const page = clampPage(req.query.page);
 
   // genre may be a single id or a comma/pipe-joined multi-id (e.g. "28,12").
@@ -152,40 +164,51 @@ async function search(req, res) {
   const certificationCountry =
     String(req.query.certification_country || "US").trim().toUpperCase() || "US";
 
-  // Fingerprint the request for the feed cache. A free-text search ignores sort and
-  // every filter (pure /search/movie relevance), so when q is present the result
-  // depends ONLY on q + page — key on just those so filter/sort permutations of the
-  // same query share one cached page. The empty-q discover feed keys on sort + every
-  // filter. genre is kept as its RAW query string (it may be a comma-joined multi-id
-  // like "28,12"); the rest are the normalized single values. Two requests with the
-  // same fingerprint share a cached page; anything that changes the results changes
-  // the key. NOTE: any NEW filter added to the discover params below MUST also be
-  // added here, or two different queries would collide on one (wrong) cached page.
-  const keyParams = q
-    ? { q, page }
-    : {
-        q,
-        sort,
-        page,
-        genre: req.query.genre ? String(req.query.genre) : null,
-        yearFrom,
-        yearTo,
-        minRating,
-        minVotes,
-        language,
-        with_cast: withCast,
-        with_crew: withCrew,
-        providers: providerIds.length ? providerIds.join("|") : null,
-        watch_region: providerIds.length ? watchRegion : null,
-        certification,
-        certification_country: certification ? certificationCountry : null,
-      };
+  // Fingerprint the request for the feed cache. Search and trending both ignore all
+  // filters, so their result depends ONLY on what actually shapes it (q+page, or
+  // sort+page) — keying on just those lets filter permutations of the same feed share
+  // one cached page. The discover feed keys on sort + every filter. genre is kept as
+  // its RAW query string (it may be a comma-joined multi-id like "28,12"); the rest
+  // are the normalized single values. Two requests with the same fingerprint share a
+  // cached page; anything that changes the results changes the key. NOTE: any NEW
+  // filter added to the discover params below MUST also be added here, or two
+  // different queries would collide on one (wrong) cached page.
+  let keyParams;
+  if (q) {
+    keyParams = { q, page }; // text search — relevance only
+  } else if (sort === TRENDING_SORT) {
+    keyParams = { sort, page }; // weekly trending — no filters honored
+  } else {
+    keyParams = {
+      q,
+      sort,
+      page,
+      genre: req.query.genre ? String(req.query.genre) : null,
+      yearFrom,
+      yearTo,
+      minRating,
+      minVotes,
+      language,
+      with_cast: withCast,
+      with_crew: withCrew,
+      providers: providerIds.length ? providerIds.join("|") : null,
+      watch_region: providerIds.length ? watchRegion : null,
+      certification,
+      certification_country: certification ? certificationCountry : null,
+    };
+  }
 
   // The real TMDB fetch — only runs on a cache miss (or when Mongo is unavailable).
   const fetchFromTmdb = async () => {
     // Any free-text query goes to /search/movie and is returned by relevance, with
     // sort and ALL filters intentionally ignored (search is pure text relevance).
     if (q) return searchByText(q, page);
+
+    // Weekly trending feed — TMDB's own ranking; accepts no filters/sort_by.
+    if (sort === TRENDING_SORT) {
+      const data = await tmdb("/trending/movie/week", { page });
+      return data.results || [];
+    }
 
     // Empty q -> the discover feed, with every filter as a native param and the
     // page forwarded straight through.
