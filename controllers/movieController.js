@@ -71,10 +71,13 @@ const SORTERS = {
 
 // Our `sort` values -> TMDB /discover `sort_by`. TMDB has no title sort, so
 // title_* maps to original_title.*; year_* maps to primary_release_date.*.
-// (/search/movie ignores sort_by entirely; the text path preserves TMDB's
-// relevance order and only sorts within the page when a sort is explicitly chosen.)
+// `popularity` ("Most Popular" / overall) maps to vote_count.desc — the most-
+// rated/most-viewed titles of ALL TIME (Fight Club, Pulp Fiction, Inception, ...).
+// NOT TMDB's `popularity.desc`, which is a recency-weighted "hot right now" score
+// that only surfaces the current year's releases — that's the `trending` feed's job.
+// (/search/movie ignores sort_by entirely; the text path is pure relevance.)
 const SORT_BY = {
-  popularity: "popularity.desc",
+  popularity: "vote_count.desc",
   rating_desc: "vote_average.desc",
   rating_asc: "vote_average.asc",
   title_asc: "original_title.asc",
@@ -84,12 +87,11 @@ const SORT_BY = {
 };
 
 // "trending" is a feed MODE, not a comparator: it maps to TMDB's /trending/movie/week
-// endpoint — genuinely weekly-trending titles, distinct from `popularity` which is
-// lifetime popularity.desc (the "all-time"/"Most Popular" sort). TMDB only offers
-// day/week trending windows, so there is no separate "all-time trending" — all-time
-// IS `popularity`. /trending can't honor discover filters natively, so the filters
-// are re-applied server-side on the page (see filterResults), exactly as the old
-// /search/movie path did — order stays TMDB's trending ranking.
+// endpoint — the titles genuinely most viewed/searched THIS WEEK. That's a different
+// axis from `popularity` (= vote_count.desc, all-time most-rated), so the two sorts
+// return genuinely different lists. /trending can't honor discover filters natively,
+// so every filter is re-applied server-side on the page (see filterResults); the
+// trending ranking order is preserved.
 const TRENDING_SORT = "trending";
 const isValidSort = (s) => Boolean(SORTERS[s]) || s === TRENDING_SORT;
 
@@ -108,34 +110,65 @@ const searchByText = async (q, page) => {
   return data.results || [];
 };
 
-// Look up a movie's certification (age rating) for a given country via TMDB
-// /movie/{id}/release_dates. Trending/search result objects don't carry a
-// certification, so filtering on it requires a per-title fetch. Returns "" when that
-// country publishes no certification for the movie (so such titles are excluded by an
-// exact-match filter, like an undated title is by a year range). A failed lookup is
-// treated as "" rather than failing the whole page.
-async function fetchCertification(movieId, country) {
-  let data;
+// Enrich one movie with the fields that aren't on a list/trending result object but
+// some filters need: certification (release_dates), cast/crew (credits), and watch
+// providers (watch/providers). One /movie/{id} call with append_to_response gets all
+// three. Returns null on a failed lookup (the caller excludes such titles rather than
+// failing the whole page).
+async function fetchMovieFacets(movieId) {
   try {
-    data = await tmdb(`/movie/${movieId}/release_dates`);
+    return await tmdb(`/movie/${movieId}`, {
+      append_to_response: "release_dates,credits,watch/providers",
+    });
   } catch (_) {
-    return ""; // a single bad lookup shouldn't sink the whole page
+    return null;
   }
-  const entry = (data.results || []).find((r) => r.iso_3166_1 === country);
+}
+
+// A movie's certification (age rating) for a country, read from an enriched detail.
+// "" when that country publishes none (so an exact-match filter excludes it).
+function certificationOf(detail, country) {
+  const entry = ((detail.release_dates || {}).results || []).find(
+    (r) => r.iso_3166_1 === country,
+  );
   if (!entry) return "";
-  // A country can list several release types (theatrical, digital, ...); take the
-  // first entry that actually carries a certification.
   const rated = (entry.release_dates || []).find((d) => d.certification);
   return rated ? rated.certification : "";
 }
 
+// True if the movie is offered by ANY of `providerIds` in `region`, across every
+// monetization type (stream/free/ads/rent/buy) — OR semantics, matching discover's
+// with_watch_providers="a|b". Read from an enriched detail's watch/providers block.
+function hasAnyProvider(detail, region, providerIds) {
+  const regionData = ((detail["watch/providers"] || {}).results || {})[region];
+  if (!regionData) return false;
+  const ids = new Set();
+  for (const kind of ["flatrate", "free", "ads", "rent", "buy"]) {
+    for (const p of regionData[kind] || []) ids.add(p.provider_id);
+  }
+  return providerIds.some((id) => ids.has(id));
+}
+
+// True if `list` (credits.cast or credits.crew) contains ANY of the person ids in the
+// raw with_cast/with_crew param (comma/pipe-joined). Empty/absent param -> no filter.
+function creditHasAnyPerson(list, raw) {
+  const ids = String(raw || "")
+    .split(/[,|]/)
+    .map((s) => parseInt(s.trim(), 10))
+    .filter(Number.isFinite);
+  if (!ids.length) return true;
+  const present = new Set((list || []).map((p) => p.id));
+  return ids.some((id) => present.has(id));
+}
+
 // Re-apply the discover filters in-memory to a page whose TMDB source can't honor
 // them natively (the /trending/movie/week feed). genre/year/rating/votes/language
-// read straight off the result objects; certification needs a per-title lookup, so
-// it runs LAST — after the cheap filters have narrowed the page — and concurrently.
+// read straight off the result objects (cheap). certification/providers/cast/crew
+// aren't on the result object, so every title surviving the cheap filters is enriched
+// with ONE /movie/{id} fetch and those filters are applied from it — concurrently,
+// and only after the cheap filters have narrowed the page so the fewest lookups run.
 // A page may shrink as filters trim it (TMDB pages aren't re-packed); the trending
-// ranking order is preserved. (Provider/cast/crew filters are discover-native and
-// not applied here.)
+// ranking order is preserved.
 async function filterResults(results, f) {
   let out = results;
   if (f.genreIds.length) {
@@ -154,11 +187,24 @@ async function filterResults(results, f) {
   if (f.minRating !== null) out = out.filter((m) => (m.vote_average || 0) >= f.minRating);
   if (f.minVotes !== null) out = out.filter((m) => (m.vote_count || 0) >= f.minVotes);
   if (f.language !== null) out = out.filter((m) => m.original_language === f.language);
-  if (f.certification !== null) {
-    const certs = await Promise.all(
-      out.map((m) => fetchCertification(m.id, f.certificationCountry)),
-    );
-    out = out.filter((_, i) => certs[i] === f.certification);
+
+  // The remaining filters need data only on the full movie detail. Fetch it once per
+  // surviving title and apply them all from that single response.
+  const needsDetail =
+    f.certification !== null || f.providerIds.length || f.withCast || f.withCrew;
+  if (needsDetail) {
+    const details = await Promise.all(out.map((m) => fetchMovieFacets(m.id)));
+    out = out.filter((_, i) => {
+      const d = details[i];
+      if (!d) return false; // failed lookup -> exclude, like an exact-match miss
+      if (f.certification !== null && certificationOf(d, f.certificationCountry) !== f.certification) {
+        return false;
+      }
+      if (f.providerIds.length && !hasAnyProvider(d, f.watchRegion, f.providerIds)) return false;
+      if (f.withCast && !creditHasAnyPerson((d.credits || {}).cast, f.withCast)) return false;
+      if (f.withCrew && !creditHasAnyPerson((d.credits || {}).crew, f.withCrew)) return false;
+      return true;
+    });
   }
   return out;
 }
@@ -171,12 +217,14 @@ async function filterResults(results, f) {
 //   • Free-text (q present): TMDB /search/movie, returned by relevance. Sort and
 //     ALL filters are intentionally IGNORED — search is pure text relevance, so the
 //     canonical original ranks above its sequels and typos are tolerated.
-//   • Trending (sort=trending, q empty): TMDB /trending/movie/week — the weekly
-//     trending list. /trending can't filter natively, so genre/year/rating/votes/
-//     language/certification are re-applied in-memory (provider/cast/crew are
-//     discover-native and not applied here); the trending order is preserved.
+//   • Trending (sort=trending, q empty): TMDB /trending/movie/week — most viewed/
+//     searched this week. /trending can't filter natively, so EVERY filter is
+//     re-applied in-memory (genre/year/rating/votes/language cheaply off the result;
+//     certification/providers/cast/crew via a per-title detail fetch); trending order
+//     is preserved.
 //   • Discover (q empty, any other sort): /discover/movie with sort + every filter
-//     as native params. sort=popularity is lifetime "all-time" popularity.desc.
+//     as native params. sort=popularity = vote_count.desc, the all-time most-rated
+//     (Fight Club, Pulp Fiction, ...) — NOT TMDB's recency-biased popularity.desc.
 // Params: q, genre, yearFrom, yearTo, minRating, minVotes, language, with_cast,
 // with_crew, providers, certification, sort (default popularity), page.
 //
@@ -259,13 +307,14 @@ async function search(req, res) {
     if (q) return searchByText(q, page);
 
     // Weekly trending feed — TMDB's own ranking. /trending can't honor discover
-    // filters, so re-apply them in-memory on the page (genre/year/rating/votes/
-    // language/certification). The trending order is preserved.
+    // filters, so re-apply ALL of them in-memory on the page (heavy filters via a
+    // per-title detail fetch). The trending order is preserved.
     if (sort === TRENDING_SORT) {
       const data = await tmdb("/trending/movie/week", { page });
       return filterResults(data.results || [], {
         genreIds, yearFrom, yearTo, minRating, minVotes, language,
         certification, certificationCountry,
+        providerIds, watchRegion, withCast, withCrew,
       });
     }
 
