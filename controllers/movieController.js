@@ -87,8 +87,9 @@ const SORT_BY = {
 // endpoint — genuinely weekly-trending titles, distinct from `popularity` which is
 // lifetime popularity.desc (the "all-time"/"Most Popular" sort). TMDB only offers
 // day/week trending windows, so there is no separate "all-time trending" — all-time
-// IS `popularity`. /trending accepts no discover filters or sort_by, so like text
-// search it ignores filters and just paginates.
+// IS `popularity`. /trending can't honor discover filters natively, so the filters
+// are re-applied server-side on the page (see filterResults), exactly as the old
+// /search/movie path did — order stays TMDB's trending ranking.
 const TRENDING_SORT = "trending";
 const isValidSort = (s) => Boolean(SORTERS[s]) || s === TRENDING_SORT;
 
@@ -107,6 +108,61 @@ const searchByText = async (q, page) => {
   return data.results || [];
 };
 
+// Look up a movie's certification (age rating) for a given country via TMDB
+// /movie/{id}/release_dates. Trending/search result objects don't carry a
+// certification, so filtering on it requires a per-title fetch. Returns "" when that
+// country publishes no certification for the movie (so such titles are excluded by an
+// exact-match filter, like an undated title is by a year range). A failed lookup is
+// treated as "" rather than failing the whole page.
+async function fetchCertification(movieId, country) {
+  let data;
+  try {
+    data = await tmdb(`/movie/${movieId}/release_dates`);
+  } catch (_) {
+    return ""; // a single bad lookup shouldn't sink the whole page
+  }
+  const entry = (data.results || []).find((r) => r.iso_3166_1 === country);
+  if (!entry) return "";
+  // A country can list several release types (theatrical, digital, ...); take the
+  // first entry that actually carries a certification.
+  const rated = (entry.release_dates || []).find((d) => d.certification);
+  return rated ? rated.certification : "";
+}
+
+// Re-apply the discover filters in-memory to a page whose TMDB source can't honor
+// them natively (the /trending/movie/week feed). genre/year/rating/votes/language
+// read straight off the result objects; certification needs a per-title lookup, so
+// it runs LAST — after the cheap filters have narrowed the page — and concurrently.
+// A page may shrink as filters trim it (TMDB pages aren't re-packed); the trending
+// ranking order is preserved. (Provider/cast/crew filters are discover-native and
+// not applied here.)
+async function filterResults(results, f) {
+  let out = results;
+  if (f.genreIds.length) {
+    // OR semantics: keep a movie if it matches ANY selected genre.
+    out = out.filter((m) => (m.genre_ids || []).some((id) => f.genreIds.includes(id)));
+  }
+  if (f.yearFrom !== null || f.yearTo !== null) {
+    out = out.filter((m) => {
+      const y = releaseYear(m);
+      if (y === null) return false; // undated excluded when a year range is set
+      if (f.yearFrom !== null && y < f.yearFrom) return false;
+      if (f.yearTo !== null && y > f.yearTo) return false;
+      return true;
+    });
+  }
+  if (f.minRating !== null) out = out.filter((m) => (m.vote_average || 0) >= f.minRating);
+  if (f.minVotes !== null) out = out.filter((m) => (m.vote_count || 0) >= f.minVotes);
+  if (f.language !== null) out = out.filter((m) => m.original_language === f.language);
+  if (f.certification !== null) {
+    const certs = await Promise.all(
+      out.map((m) => fetchCertification(m.id, f.certificationCountry)),
+    );
+    out = out.filter((_, i) => certs[i] === f.certification);
+  }
+  return out;
+}
+
 // ===========================================================================
 // /api contract handlers — envelope { ok:true, data } / { ok:false, error }.
 // ===========================================================================
@@ -116,7 +172,9 @@ const searchByText = async (q, page) => {
 //     ALL filters are intentionally IGNORED — search is pure text relevance, so the
 //     canonical original ranks above its sequels and typos are tolerated.
 //   • Trending (sort=trending, q empty): TMDB /trending/movie/week — the weekly
-//     trending list. Accepts no discover filters, so filters are ignored here too.
+//     trending list. /trending can't filter natively, so genre/year/rating/votes/
+//     language/certification are re-applied in-memory (provider/cast/crew are
+//     discover-native and not applied here); the trending order is preserved.
 //   • Discover (q empty, any other sort): /discover/movie with sort + every filter
 //     as native params. sort=popularity is lifetime "all-time" popularity.desc.
 // Params: q, genre, yearFrom, yearTo, minRating, minVotes, language, with_cast,
@@ -164,39 +222,35 @@ async function search(req, res) {
   const certificationCountry =
     String(req.query.certification_country || "US").trim().toUpperCase() || "US";
 
-  // Fingerprint the request for the feed cache. Search and trending both ignore all
-  // filters, so their result depends ONLY on what actually shapes it (q+page, or
-  // sort+page) — keying on just those lets filter permutations of the same feed share
-  // one cached page. The discover feed keys on sort + every filter. genre is kept as
-  // its RAW query string (it may be a comma-joined multi-id like "28,12"); the rest
-  // are the normalized single values. Two requests with the same fingerprint share a
-  // cached page; anything that changes the results changes the key. NOTE: any NEW
-  // filter added to the discover params below MUST also be added here, or two
-  // different queries would collide on one (wrong) cached page.
-  let keyParams;
-  if (q) {
-    keyParams = { q, page }; // text search — relevance only
-  } else if (sort === TRENDING_SORT) {
-    keyParams = { sort, page }; // weekly trending — no filters honored
-  } else {
-    keyParams = {
-      q,
-      sort,
-      page,
-      genre: req.query.genre ? String(req.query.genre) : null,
-      yearFrom,
-      yearTo,
-      minRating,
-      minVotes,
-      language,
-      with_cast: withCast,
-      with_crew: withCrew,
-      providers: providerIds.length ? providerIds.join("|") : null,
-      watch_region: providerIds.length ? watchRegion : null,
-      certification,
-      certification_country: certification ? certificationCountry : null,
-    };
-  }
+  // Fingerprint the request for the feed cache. A free-text search ignores sort and
+  // every filter (pure /search/movie relevance), so when q is present the result
+  // depends ONLY on q + page — key on just those so filter/sort permutations of the
+  // same query share one cached page. The discover AND trending feeds both honor the
+  // filters (trending re-applies them in-memory), so they key on sort + every filter.
+  // genre is kept as its RAW query string (it may be a comma-joined multi-id like
+  // "28,12"); the rest are the normalized single values. Two requests with the same
+  // fingerprint share a cached page; anything that changes the results changes the
+  // key. NOTE: any NEW filter added below MUST also be added here, or two different
+  // queries would collide on one (wrong) cached page.
+  const keyParams = q
+    ? { q, page }
+    : {
+        q,
+        sort,
+        page,
+        genre: req.query.genre ? String(req.query.genre) : null,
+        yearFrom,
+        yearTo,
+        minRating,
+        minVotes,
+        language,
+        with_cast: withCast,
+        with_crew: withCrew,
+        providers: providerIds.length ? providerIds.join("|") : null,
+        watch_region: providerIds.length ? watchRegion : null,
+        certification,
+        certification_country: certification ? certificationCountry : null,
+      };
 
   // The real TMDB fetch — only runs on a cache miss (or when Mongo is unavailable).
   const fetchFromTmdb = async () => {
@@ -204,10 +258,15 @@ async function search(req, res) {
     // sort and ALL filters intentionally ignored (search is pure text relevance).
     if (q) return searchByText(q, page);
 
-    // Weekly trending feed — TMDB's own ranking; accepts no filters/sort_by.
+    // Weekly trending feed — TMDB's own ranking. /trending can't honor discover
+    // filters, so re-apply them in-memory on the page (genre/year/rating/votes/
+    // language/certification). The trending order is preserved.
     if (sort === TRENDING_SORT) {
       const data = await tmdb("/trending/movie/week", { page });
-      return data.results || [];
+      return filterResults(data.results || [], {
+        genreIds, yearFrom, yearTo, minRating, minVotes, language,
+        certification, certificationCountry,
+      });
     }
 
     // Empty q -> the discover feed, with every filter as a native param and the
@@ -241,10 +300,12 @@ async function search(req, res) {
     return tmdbData.results || [];
   };
 
-  // cacheEmpty:!q — only freeze empties for the stable discover feed. A free-text
-  // search's empty is conservatively left uncached (TMDB relevance can shift), so a
-  // later identical query re-fetches rather than serving a frozen empty page.
-  const data = await movieCache.getFeed(keyParams, fetchFromTmdb, { cacheEmpty: !q });
+  // Only freeze empties for the plain discover feed, whose empty is a stable TMDB
+  // result. A free-text search (TMDB relevance can shift) or a filtered trending page
+  // (in-memory filters can trim a shifting trending list to zero) is left uncached, so
+  // a later identical request re-fetches rather than serving a frozen empty page.
+  const cacheEmpty = !q && sort !== TRENDING_SORT;
+  const data = await movieCache.getFeed(keyParams, fetchFromTmdb, { cacheEmpty });
   res.json({ ok: true, data });
 }
 
