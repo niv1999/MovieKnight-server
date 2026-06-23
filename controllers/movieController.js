@@ -43,41 +43,22 @@ async function pickRandomMovie() {
   return { movie: results[randInt(0, results.length - 1)], fallback: true };
 }
 
-// Server-side sort comparators for /api/movies/search. Keys are the allowable
-// `sort` values; default is "popularity".
-const DEFAULT_SORT = "popularity";
-const releaseYear = (m) => {
-  const y = parseInt(String(m.release_date || "").slice(0, 4), 10);
-  return Number.isFinite(y) ? y : null; // null = undated
-};
-// Year comparator that keeps undated titles at the bottom in both directions.
-const byYear = (dir) => (a, b) => {
-  const ya = releaseYear(a);
-  const yb = releaseYear(b);
-  if (ya === null && yb === null) return 0;
-  if (ya === null) return 1; // undated always sinks
-  if (yb === null) return -1;
-  return dir === "asc" ? ya - yb : yb - ya;
-};
-const SORTERS = {
-  popularity: (a, b) => (b.popularity || 0) - (a.popularity || 0),
-  rating_desc: (a, b) => (b.vote_average || 0) - (a.vote_average || 0),
-  rating_asc: (a, b) => (a.vote_average || 0) - (b.vote_average || 0),
-  title_asc: (a, b) => String(a.title || "").localeCompare(String(b.title || "")),
-  title_desc: (a, b) => String(b.title || "").localeCompare(String(a.title || "")),
-  year_desc: byYear("desc"),
-  year_asc: byYear("asc"),
-};
-
-// Our `sort` values -> TMDB /discover `sort_by`. TMDB has no title sort, so
-// title_* maps to original_title.*; year_* maps to primary_release_date.*.
-// `popularity` ("Most Popular" / overall) maps to vote_count.desc — the most-
-// rated/most-viewed titles of ALL TIME (Fight Club, Pulp Fiction, Inception, ...).
-// NOT TMDB's `popularity.desc`, which is a recency-weighted "hot right now" score
-// that only surfaces the current year's releases — that's the `trending` feed's job.
+// Allowable `sortBy` values for /api/movies/search and their TMDB /discover `sort_by`
+// mapping. These are SEMANTIC names the client requests by intent; the client never
+// sees (or sends) a TMDB sort string, so the mapping below is the single place that
+// owns "what does this sort actually mean" — change the retrieval logic here and the
+// client is untouched. Notably the two popularity-style sorts:
+//   • popularity ("Most Popular" / overall) -> vote_count.desc — the most-rated/viewed
+//     titles of ALL TIME (Fight Club, Pulp Fiction, Inception, ...).
+//   • trending ("Popular this week") -> popularity.desc — TMDB's recency-weighted
+//     "hot right now" score, which surfaces what's currently being watched/searched.
+// Both run through /discover, so every filter applies natively. (TMDB has no title
+// sort, so title_* -> original_title.*; year_* -> primary_release_date.*.)
 // (/search/movie ignores sort_by entirely; the text path is pure relevance.)
+const DEFAULT_SORT = "popularity";
 const SORT_BY = {
   popularity: "vote_count.desc",
+  trending: "popularity.desc",
   rating_desc: "vote_average.desc",
   rating_asc: "vote_average.asc",
   title_asc: "original_title.asc",
@@ -85,15 +66,7 @@ const SORT_BY = {
   year_desc: "primary_release_date.desc",
   year_asc: "primary_release_date.asc",
 };
-
-// "trending" is a feed MODE, not a comparator: it maps to TMDB's /trending/movie/week
-// endpoint — the titles genuinely most viewed/searched THIS WEEK. That's a different
-// axis from `popularity` (= vote_count.desc, all-time most-rated), so the two sorts
-// return genuinely different lists. /trending can't honor discover filters natively,
-// so every filter is re-applied server-side on the page (see filterResults); the
-// trending ranking order is preserved.
-const TRENDING_SORT = "trending";
-const isValidSort = (s) => Boolean(SORTERS[s]) || s === TRENDING_SORT;
+const isValidSort = (s) => Boolean(SORT_BY[s]);
 
 // Default vote floor for rating sorts so a handful of single-vote 10.0 titles
 // don't dominate. Only applied when the caller didn't set their own minVotes.
@@ -110,130 +83,31 @@ const searchByText = async (q, page) => {
   return data.results || [];
 };
 
-// Enrich one movie with the fields that aren't on a list/trending result object but
-// some filters need: certification (release_dates), cast/crew (credits), and watch
-// providers (watch/providers). One /movie/{id} call with append_to_response gets all
-// three. Returns null on a failed lookup (the caller excludes such titles rather than
-// failing the whole page).
-async function fetchMovieFacets(movieId) {
-  try {
-    return await tmdb(`/movie/${movieId}`, {
-      append_to_response: "release_dates,credits,watch/providers",
-    });
-  } catch (_) {
-    return null;
-  }
-}
-
-// A movie's certification (age rating) for a country, read from an enriched detail.
-// "" when that country publishes none (so an exact-match filter excludes it).
-function certificationOf(detail, country) {
-  const entry = ((detail.release_dates || {}).results || []).find(
-    (r) => r.iso_3166_1 === country,
-  );
-  if (!entry) return "";
-  const rated = (entry.release_dates || []).find((d) => d.certification);
-  return rated ? rated.certification : "";
-}
-
-// True if the movie is offered by ANY of `providerIds` in `region`, across every
-// monetization type (stream/free/ads/rent/buy) — OR semantics, matching discover's
-// with_watch_providers="a|b". Read from an enriched detail's watch/providers block.
-function hasAnyProvider(detail, region, providerIds) {
-  const regionData = ((detail["watch/providers"] || {}).results || {})[region];
-  if (!regionData) return false;
-  const ids = new Set();
-  for (const kind of ["flatrate", "free", "ads", "rent", "buy"]) {
-    for (const p of regionData[kind] || []) ids.add(p.provider_id);
-  }
-  return providerIds.some((id) => ids.has(id));
-}
-
-// True if `list` (credits.cast or credits.crew) contains ANY of the person ids in the
-// raw with_cast/with_crew param (comma/pipe-joined). Empty/absent param -> no filter.
-function creditHasAnyPerson(list, raw) {
-  const ids = String(raw || "")
-    .split(/[,|]/)
-    .map((s) => parseInt(s.trim(), 10))
-    .filter(Number.isFinite);
-  if (!ids.length) return true;
-  const present = new Set((list || []).map((p) => p.id));
-  return ids.some((id) => present.has(id));
-}
-
-// Re-apply the discover filters in-memory to a page whose TMDB source can't honor
-// them natively (the /trending/movie/week feed). genre/year/rating/votes/language
-// read straight off the result objects (cheap). certification/providers/cast/crew
-// aren't on the result object, so every title surviving the cheap filters is enriched
-// with ONE /movie/{id} fetch and those filters are applied from it — concurrently,
-// and only after the cheap filters have narrowed the page so the fewest lookups run.
-// A page may shrink as filters trim it (TMDB pages aren't re-packed); the trending
-// ranking order is preserved.
-async function filterResults(results, f) {
-  let out = results;
-  if (f.genreIds.length) {
-    // OR semantics: keep a movie if it matches ANY selected genre.
-    out = out.filter((m) => (m.genre_ids || []).some((id) => f.genreIds.includes(id)));
-  }
-  if (f.yearFrom !== null || f.yearTo !== null) {
-    out = out.filter((m) => {
-      const y = releaseYear(m);
-      if (y === null) return false; // undated excluded when a year range is set
-      if (f.yearFrom !== null && y < f.yearFrom) return false;
-      if (f.yearTo !== null && y > f.yearTo) return false;
-      return true;
-    });
-  }
-  if (f.minRating !== null) out = out.filter((m) => (m.vote_average || 0) >= f.minRating);
-  if (f.minVotes !== null) out = out.filter((m) => (m.vote_count || 0) >= f.minVotes);
-  if (f.language !== null) out = out.filter((m) => m.original_language === f.language);
-
-  // The remaining filters need data only on the full movie detail. Fetch it once per
-  // surviving title and apply them all from that single response.
-  const needsDetail =
-    f.certification !== null || f.providerIds.length || f.withCast || f.withCrew;
-  if (needsDetail) {
-    const details = await Promise.all(out.map((m) => fetchMovieFacets(m.id)));
-    out = out.filter((_, i) => {
-      const d = details[i];
-      if (!d) return false; // failed lookup -> exclude, like an exact-match miss
-      if (f.certification !== null && certificationOf(d, f.certificationCountry) !== f.certification) {
-        return false;
-      }
-      if (f.providerIds.length && !hasAnyProvider(d, f.watchRegion, f.providerIds)) return false;
-      if (f.withCast && !creditHasAnyPerson((d.credits || {}).cast, f.withCast)) return false;
-      if (f.withCrew && !creditHasAnyPerson((d.credits || {}).crew, f.withCrew)) return false;
-      return true;
-    });
-  }
-  return out;
-}
-
 // ===========================================================================
 // /api contract handlers — envelope { ok:true, data } / { ok:false, error }.
 // ===========================================================================
 
-// GET /api/movies/search — movie feed with continuous pagination. Three modes:
+// GET /api/movies/search — movie feed with continuous pagination. Two modes:
 //   • Free-text (q present): TMDB /search/movie, returned by relevance. Sort and
 //     ALL filters are intentionally IGNORED — search is pure text relevance, so the
 //     canonical original ranks above its sequels and typos are tolerated.
-//   • Trending (sort=trending, q empty): TMDB /trending/movie/week — most viewed/
-//     searched this week. /trending can't filter natively, so EVERY filter is
-//     re-applied in-memory (genre/year/rating/votes/language cheaply off the result;
-//     certification/providers/cast/crew via a per-title detail fetch); trending order
-//     is preserved.
-//   • Discover (q empty, any other sort): /discover/movie with sort + every filter
-//     as native params. sort=popularity = vote_count.desc, the all-time most-rated
-//     (Fight Club, Pulp Fiction, ...) — NOT TMDB's recency-biased popularity.desc.
+//   • Discover (q empty): /discover/movie with the chosen sort + every filter as
+//     native params. The `sortBy` value is a SEMANTIC intent the server maps to a
+//     TMDB sort_by (see SORT_BY) — e.g. `popularity` = all-time most-rated
+//     (vote_count.desc); `trending` = what's hot this week (popularity.desc). Both go
+//     through /discover so every filter applies natively.
 // Params: q, genre, yearFrom, yearTo, minRating, minVotes, language, with_cast,
-// with_crew, providers, certification, sort (default popularity), page.
+// with_crew, providers, certification, sortBy (alias: sort; default popularity), page.
 //
 // `page` maps 1:1 to the underlying TMDB page (TMDB serves up to page 500), so
 // result sets don't shrink as you scroll — we return an empty array only when TMDB
 // itself runs out of pages.
 async function search(req, res) {
   const q = String(req.query.q || "").trim();
-  const sort = isValidSort(req.query.sort) ? req.query.sort : DEFAULT_SORT;
+  // `sortBy` is the semantic sort name; accept legacy `sort` as an alias. The client
+  // only ever sends an intent name (popularity/trending/...), never a TMDB sort_by.
+  const requestedSort = req.query.sortBy || req.query.sort;
+  const sort = isValidSort(requestedSort) ? requestedSort : DEFAULT_SORT;
   const page = clampPage(req.query.page);
 
   // genre may be a single id or a comma/pipe-joined multi-id (e.g. "28,12").
@@ -273,8 +147,7 @@ async function search(req, res) {
   // Fingerprint the request for the feed cache. A free-text search ignores sort and
   // every filter (pure /search/movie relevance), so when q is present the result
   // depends ONLY on q + page — key on just those so filter/sort permutations of the
-  // same query share one cached page. The discover AND trending feeds both honor the
-  // filters (trending re-applies them in-memory), so they key on sort + every filter.
+  // same query share one cached page. The discover feed keys on sort + every filter.
   // genre is kept as its RAW query string (it may be a comma-joined multi-id like
   // "28,12"); the rest are the normalized single values. Two requests with the same
   // fingerprint share a cached page; anything that changes the results changes the
@@ -306,20 +179,8 @@ async function search(req, res) {
     // sort and ALL filters intentionally ignored (search is pure text relevance).
     if (q) return searchByText(q, page);
 
-    // Weekly trending feed — TMDB's own ranking. /trending can't honor discover
-    // filters, so re-apply ALL of them in-memory on the page (heavy filters via a
-    // per-title detail fetch). The trending order is preserved.
-    if (sort === TRENDING_SORT) {
-      const data = await tmdb("/trending/movie/week", { page });
-      return filterResults(data.results || [], {
-        genreIds, yearFrom, yearTo, minRating, minVotes, language,
-        certification, certificationCountry,
-        providerIds, watchRegion, withCast, withCrew,
-      });
-    }
-
-    // Empty q -> the discover feed, with every filter as a native param and the
-    // page forwarded straight through.
+    // Empty q -> the discover feed, with the mapped sort + every filter as native
+    // params and the page forwarded straight through.
     const params = {
       include_adult: "false",
       sort_by: SORT_BY[sort],
@@ -349,12 +210,11 @@ async function search(req, res) {
     return tmdbData.results || [];
   };
 
-  // Only freeze empties for the plain discover feed, whose empty is a stable TMDB
-  // result. A free-text search (TMDB relevance can shift) or a filtered trending page
-  // (in-memory filters can trim a shifting trending list to zero) is left uncached, so
-  // a later identical request re-fetches rather than serving a frozen empty page.
-  const cacheEmpty = !q && sort !== TRENDING_SORT;
-  const data = await movieCache.getFeed(keyParams, fetchFromTmdb, { cacheEmpty });
+  // cacheEmpty:!q — only freeze empties for the stable discover feed (every sort,
+  // incl. trending, is now a /discover query whose empty is a deterministic TMDB
+  // result). A free-text search's empty is left uncached (TMDB relevance can shift),
+  // so a later identical query re-fetches rather than serving a frozen empty page.
+  const data = await movieCache.getFeed(keyParams, fetchFromTmdb, { cacheEmpty: !q });
   res.json({ ok: true, data });
 }
 
