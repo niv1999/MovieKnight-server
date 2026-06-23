@@ -71,7 +71,8 @@ const SORTERS = {
 
 // Our `sort` values -> TMDB /discover `sort_by`. TMDB has no title sort, so
 // title_* maps to original_title.*; year_* maps to primary_release_date.*.
-// (/search/movie ignores sort_by entirely; the text path sorts within the page.)
+// (/search/movie ignores sort_by entirely; the text path preserves TMDB's
+// relevance order and only sorts within the page when a sort is explicitly chosen.)
 const SORT_BY = {
   popularity: "popularity.desc",
   rating_desc: "vote_average.desc",
@@ -86,78 +87,32 @@ const SORT_BY = {
 // don't dominate. Only applied when the caller didn't set their own minVotes.
 const RATING_SORT_VOTE_FLOOR = 50;
 
-// Look up a movie's certification (age rating) for a given country via TMDB
-// /movie/{id}/release_dates. The /search/movie result objects don't carry a
-// certification, so the text-search path has to fetch it per title to filter on
-// it. Returns "" when that country publishes no certification for the movie (so
-// such titles are excluded by an exact-match filter, like an undated title is by
-// a year range). A failed lookup is treated as "" rather than failing the search.
-async function fetchCertification(movieId, country) {
-  let data;
-  try {
-    data = await tmdb(`/movie/${movieId}/release_dates`);
-  } catch (_) {
-    return ""; // a single bad lookup shouldn't sink the whole page
-  }
-  const entry = (data.results || []).find((r) => r.iso_3166_1 === country);
-  if (!entry) return "";
-  // A country can list several release types (theatrical, digital, ...); take the
-  // first entry that actually carries a certification.
-  const rated = (entry.release_dates || []).find((d) => d.certification);
-  return rated ? rated.certification : "";
-}
-
-// Free-text search via TMDB /search/movie. That endpoint can't honor discover
-// filters or sort_by, so we re-apply the filters server-side and sort within the
-// page. `page` is forwarded 1:1 to TMDB, so pages stay full as the user scrolls
-// (a filter may trim a page, but nothing is sliced or capped to a fixed pool).
-const searchByText = async (q, page, f) => {
+// Free-text search via TMDB /search/movie. Returned RAW — we deliberately do NOT
+// apply any sort or filter when there's a text query. /search/movie already ranks
+// by text-match relevance (typo tolerant, the canonical original above its
+// sequels/spin-offs), and re-sorting or filtering that page would only bury the
+// title the user actually searched for. Sort and filters apply to the discover feed
+// (empty q) only. `page` is forwarded 1:1 to TMDB so pages stay full as you scroll.
+const searchByText = async (q, page) => {
   const data = await tmdb("/search/movie", { query: q, include_adult: "false", page });
-  let results = data.results || [];
-  if (f.genreIds && f.genreIds.length) {
-    // OR semantics: keep a movie if it matches ANY selected genre.
-    results = results.filter((m) =>
-      (m.genre_ids || []).some((id) => f.genreIds.includes(id)),
-    );
-  }
-  if (f.yearFrom !== null || f.yearTo !== null) {
-    results = results.filter((m) => {
-      const y = releaseYear(m);
-      if (y === null) return false; // undated excluded when a year range is set
-      if (f.yearFrom !== null && y < f.yearFrom) return false;
-      if (f.yearTo !== null && y > f.yearTo) return false;
-      return true;
-    });
-  }
-  if (f.minRating !== null) results = results.filter((m) => (m.vote_average || 0) >= f.minRating);
-  if (f.minVotes !== null) results = results.filter((m) => (m.vote_count || 0) >= f.minVotes);
-  if (f.language !== null) results = results.filter((m) => m.original_language === f.language);
-  // Certification isn't on the search payload, so it must be looked up per title.
-  // Apply it LAST — after the cheap in-memory filters above have narrowed the page
-  // — so we issue the fewest /release_dates calls. The lookups run concurrently.
-  if (f.certification !== null) {
-    const certs = await Promise.all(
-      results.map((m) => fetchCertification(m.id, f.certificationCountry)),
-    );
-    results = results.filter((_, i) => certs[i] === f.certification);
-  }
-  results.sort(SORTERS[f.sort]); // /search/movie can't sort_by — order within the page
-  return results;
+  return data.results || [];
 };
 
 // ===========================================================================
 // /api contract handlers — envelope { ok:true, data } / { ok:false, error }.
 // ===========================================================================
 
-// GET /api/movies/search — filtered/sorted movie feed with continuous pagination.
+// GET /api/movies/search — movie feed with continuous pagination. Two modes:
+//   • Free-text (q present): TMDB /search/movie, returned by relevance. Sort and
+//     ALL filters are intentionally IGNORED — search is pure text relevance, so the
+//     canonical original ranks above its sequels and typos are tolerated.
+//   • Discover (q empty): /discover/movie with sort + every filter as native params.
 // Params: q, genre, yearFrom, yearTo, minRating, minVotes, language, with_cast,
-// with_crew, sort (default popularity), page. Empty q -> the discover catalog feed.
+// with_crew, providers, certification, sort (default popularity), page.
 //
-// `page` maps 1:1 to the underlying TMDB page (TMDB serves up to page 500) and
-// every filter is pushed into TMDB as a native /discover param, so result sets
-// don't shrink as you scroll — we return an empty array only when TMDB itself
-// runs out of pages. The free-text path (q without a person filter) must use
-// /search/movie, which ignores those params, so it re-applies them server-side.
+// `page` maps 1:1 to the underlying TMDB page (TMDB serves up to page 500), so
+// result sets don't shrink as you scroll — we return an empty array only when TMDB
+// itself runs out of pages.
 async function search(req, res) {
   const q = String(req.query.q || "").trim();
   const sort = SORTERS[req.query.sort] ? req.query.sort : DEFAULT_SORT;
@@ -197,43 +152,42 @@ async function search(req, res) {
   const certificationCountry =
     String(req.query.certification_country || "US").trim().toUpperCase() || "US";
 
-  // Fingerprint the request for the feed cache. genre is kept as its RAW query
-  // string (it may be a comma-joined multi-id like "28,12"); the rest are the
-  // normalized single values. Two requests with the same fingerprint share a
-  // cached page; anything that changes the results changes the key.
-  // NOTE: any NEW filter added to the TMDB params below MUST also be added here,
-  // or two different queries would collide on one cached (wrong) page.
-  const keyParams = {
-    q,
-    sort,
-    page,
-    genre: req.query.genre ? String(req.query.genre) : null,
-    yearFrom,
-    yearTo,
-    minRating,
-    minVotes,
-    language,
-    with_cast: withCast,
-    with_crew: withCrew,
-    providers: providerIds.length ? providerIds.join("|") : null,
-    watch_region: providerIds.length ? watchRegion : null,
-    certification,
-    certification_country: certification ? certificationCountry : null,
-  };
+  // Fingerprint the request for the feed cache. A free-text search ignores sort and
+  // every filter (pure /search/movie relevance), so when q is present the result
+  // depends ONLY on q + page — key on just those so filter/sort permutations of the
+  // same query share one cached page. The empty-q discover feed keys on sort + every
+  // filter. genre is kept as its RAW query string (it may be a comma-joined multi-id
+  // like "28,12"); the rest are the normalized single values. Two requests with the
+  // same fingerprint share a cached page; anything that changes the results changes
+  // the key. NOTE: any NEW filter added to the discover params below MUST also be
+  // added here, or two different queries would collide on one (wrong) cached page.
+  const keyParams = q
+    ? { q, page }
+    : {
+        q,
+        sort,
+        page,
+        genre: req.query.genre ? String(req.query.genre) : null,
+        yearFrom,
+        yearTo,
+        minRating,
+        minVotes,
+        language,
+        with_cast: withCast,
+        with_crew: withCrew,
+        providers: providerIds.length ? providerIds.join("|") : null,
+        watch_region: providerIds.length ? watchRegion : null,
+        certification,
+        certification_country: certification ? certificationCountry : null,
+      };
 
   // The real TMDB fetch — only runs on a cache miss (or when Mongo is unavailable).
   const fetchFromTmdb = async () => {
-    // Free-text search (no person/provider filter): /search/movie, page 1:1.
-    // with_cast/with_crew/with_watch_providers are /discover-only, so when any is
-    // present we must take the /discover path (and re-apply the title match below).
-    if (q && !withCast && !withCrew && !providerIds.length) {
-      return searchByText(q, page, {
-        genreIds, yearFrom, yearTo, minRating, minVotes, language, sort,
-        certification, certificationCountry,
-      });
-    }
+    // Any free-text query goes to /search/movie and is returned by relevance, with
+    // sort and ALL filters intentionally ignored (search is pure text relevance).
+    if (q) return searchByText(q, page);
 
-    // Everything else uses /discover with every filter as a native param and the
+    // Empty q -> the discover feed, with every filter as a native param and the
     // page forwarded straight through.
     const params = {
       include_adult: "false",
@@ -261,20 +215,12 @@ async function search(req, res) {
     }
 
     const tmdbData = await tmdb("/discover/movie", params);
-    let results = tmdbData.results || [];
-
-    // /discover can't honor free text, so when a person/provider filter is combined
-    // with a title query, match the title server-side on the filtered page.
-    if (q && (withCast || withCrew || providerIds.length)) {
-      const needle = q.toLowerCase();
-      results = results.filter((m) => String(m.title || "").toLowerCase().includes(needle));
-    }
-
-    return results;
+    return tmdbData.results || [];
   };
 
-  // cacheEmpty:!q — a free-text search can transiently filter a page down to zero,
-  // so don't freeze that empty; a no-query /discover page's empty is stable.
+  // cacheEmpty:!q — only freeze empties for the stable discover feed. A free-text
+  // search's empty is conservatively left uncached (TMDB relevance can shift), so a
+  // later identical query re-fetches rather than serving a frozen empty page.
   const data = await movieCache.getFeed(keyParams, fetchFromTmdb, { cacheEmpty: !q });
   res.json({ ok: true, data });
 }
