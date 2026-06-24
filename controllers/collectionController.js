@@ -59,13 +59,15 @@ function itemsInOrder(collection) {
 }
 
 // The lightweight "card" shape used by the profile grid (list + create): identity,
-// visibility, counts, and up to 4 poster paths for the auto-generated 2×2 collage.
-function toCard(collection, postersById, author, isOwner) {
+// visibility, counts, and the first ≤4 movies' images for the auto-generated cover.
+function toCard(collection, coversById, author, isOwner) {
   const ordered = itemsInOrder(collection);
-  const posters = ordered
-    .map((it) => postersById.get(it.movieId))
-    .filter(Boolean)
-    .slice(0, 4);
+  // First ≤4 movies, in order, each paired { poster, backdrop } (either may be
+  // null). The client cover generator picks the image type it needs per layout.
+  const covers = ordered.slice(0, 4).map((it) => {
+    const c = coversById.get(it.movieId) || {};
+    return { poster: c.poster || null, backdrop: c.backdrop || null };
+  });
   return {
     id: String(collection._id),
     name: collection.name,
@@ -75,7 +77,8 @@ function toCard(collection, postersById, author, isOwner) {
     sort: collection.sort || "added_desc", // remembered "Sort by"
     movieCount: ordered.length,
     movieIds: ordered.map((it) => it.movieId), // all TMDB ids — cheap membership checks (heart/eye)
-    posters, // bare TMDB paths for the first ≤4 movies (client prefixes the CDN)
+    covers, // bare TMDB paths (poster+backdrop) for the first ≤4 movies (client prefixes the CDN)
+    posters: covers.map((c) => c.poster).filter(Boolean), // flat list kept for the grid's image preload
     likesCount: 0, // deferred (Explore) — always 0 for now
     savesCount: 0,
     author: author || null,
@@ -127,15 +130,19 @@ function toFull(collection, movieDocsById, author, isOwner) {
   };
 }
 
-// Fetch poster paths for a set of movie ids in one query → Map(id → posterPath).
-async function postersFor(movieIds) {
+// Fetch poster + backdrop paths for a set of movie ids in one query
+// → Map(id → { poster, backdrop }). The client cover generator needs BOTH so it
+// can pick poster or backdrop per layout/viewport (see buildCollectionCover).
+async function coversFor(movieIds) {
   const map = new Map();
   if (!movieIds.length || !dbReady()) return map;
   const docs = await Movie.find(
     { _id: { $in: movieIds } },
-    "posterPath"
+    "posterPath backdropPath"
   ).lean();
-  docs.forEach((d) => map.set(d._id, d.posterPath || null));
+  docs.forEach((d) =>
+    map.set(d._id, { poster: d.posterPath || null, backdrop: d.backdropPath || null })
+  );
   return map;
 }
 
@@ -246,7 +253,7 @@ async function listMine(req, res) {
     .sort({ isDefault: -1, createdAt: 1 })
     .lean();
 
-  // Gather the first ≤4 movie ids of every collection, fetch all their posters in
+  // Gather the first ≤4 movie ids of every collection, fetch all their images in
   // ONE query, then build the cards.
   const wantedIds = new Set();
   cols.forEach((c) =>
@@ -254,11 +261,11 @@ async function listMine(req, res) {
       .slice(0, 4)
       .forEach((it) => wantedIds.add(it.movieId))
   );
-  const postersById = await postersFor([...wantedIds]);
+  const coversById = await coversFor([...wantedIds]);
 
   // Every collection here is the caller's own, so they're always the owner.
   const author = req.user.username;
-  const data = cols.map((c) => toCard(c, postersById, author, true));
+  const data = cols.map((c) => toCard(c, coversById, author, true));
   res.json({ ok: true, data });
 }
 
@@ -380,12 +387,12 @@ async function update(req, res) {
   // silent no-op that still returns the current card with 200.
   if (changed) await collection.save();
 
-  // Rebuild the card shape (with collage posters) so the client can refresh in place.
+  // Rebuild the card shape (with cover images) so the client can refresh in place.
   const firstIds = itemsInOrder(collection)
     .slice(0, 4)
     .map((it) => it.movieId);
-  const postersById = await postersFor(firstIds);
-  res.json({ ok: true, data: toCard(collection, postersById, req.user.username, true) });
+  const coversById = await coversFor(firstIds);
+  res.json({ ok: true, data: toCard(collection, coversById, req.user.username, true) });
 }
 
 // DELETE /api/collections/:id — owner only; the 3 defaults can't be deleted.

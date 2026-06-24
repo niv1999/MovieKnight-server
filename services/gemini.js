@@ -83,26 +83,30 @@ function parseJsonArray(text) {
   return parsed;
 }
 
-// Run one prompt in JSON mode and return the parsed array. `prompt` must itself
-// describe the exact JSON shape (the controllers own those schema strings). All
-// failure modes — missing key (500), timeout (504), bad JSON (502), upstream
-// error (mapped/502) — arrive as Errors with a `.status`.
-async function generateJsonArray(prompt, { temperature = 0.4 } = {}) {
-  const model = getClient().getGenerativeModel({
-    model: MODEL,
-    generationConfig: {
-      // Force structured output: the model returns a JSON value, not chat prose.
-      responseMimeType: "application/json",
-      // A little creativity for recommendations, still grounded. Callers that want
-      // fresh picks on repeat calls (e.g. "Let AI Choose" → Try Again) raise this.
-      temperature,
-      // gemini-2.5-* are "thinking" models: left on, a 50-title search spends its
-      // whole budget reasoning and blows past GEMINI_TIMEOUT_MS. Our tasks are
-      // ranking/extraction, not reasoning, so we disable thinking — a 50-result
-      // search drops from >20s to ~6s. (Ignored by non-thinking models.)
-      thinkingConfig: { thinkingBudget: 0 },
-    },
-  });
+// Run one prompt in JSON mode and return the parsed array. Pass `schema` (a Gemini
+// responseSchema) to CONSTRAIN the output to exactly that shape — the model then
+// can't return extra/missing fields or non-JSON, so the controllers' schema is a
+// hard contract, not just a prompt suggestion. All failure modes — missing key
+// (500), timeout (504), bad JSON (502), upstream error (mapped/502) — arrive as
+// Errors with a `.status`.
+async function generateJsonArray(prompt, { temperature = 0.4, schema = null } = {}) {
+  const generationConfig = {
+    // Force structured output: the model returns a JSON value, not chat prose.
+    responseMimeType: "application/json",
+    // A little creativity for recommendations, still grounded. Callers that want
+    // fresh picks on repeat calls (e.g. "Let AI Choose" → Try Again) raise this.
+    temperature,
+    // gemini-2.5-* are "thinking" models: left on, a 50-title search spends its
+    // whole budget reasoning and blows past GEMINI_TIMEOUT_MS. Our tasks are
+    // ranking/extraction, not reasoning, so we disable thinking — a 50-result
+    // search drops from >20s to ~6s. (Ignored by non-thinking models.)
+    thinkingConfig: { thinkingBudget: 0 },
+  };
+  // Strict schema (when given): Gemini emits EXACTLY this shape, so a hallucinated
+  // field or a markdown-wrapped reply can't happen — parseJsonArray then never trips.
+  if (schema) generationConfig.responseSchema = schema;
+
+  const model = getClient().getGenerativeModel({ model: MODEL, generationConfig });
 
   let result;
   try {

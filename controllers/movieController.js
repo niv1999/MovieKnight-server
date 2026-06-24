@@ -232,45 +232,13 @@ async function cacheStats(req, res) {
   res.json({ ok: true, data: await movieCache.getStats() });
 }
 
-// Build the Movie Details payload from a raw TMDB /movie/:id response (with
-// credits + videos appended). Trimmed to what the page renders: overview, genres,
-// director, top cast, and a YouTube trailer key. Shared shape with the cached
-// detail (movieCache.docToDetail) so served-from-Mongo details are identical.
-function buildDetailPayload(movie) {
-  const crew = (movie.credits && movie.credits.crew) || [];
-  const director = crew.find((c) => c.job === "Director");
-
-  const videos = (movie.videos && movie.videos.results) || [];
-  // Prefer an official YouTube "Trailer"; fall back to any YouTube clip.
-  const trailer =
-    videos.find((v) => v.site === "YouTube" && v.type === "Trailer") ||
-    videos.find((v) => v.site === "YouTube");
-
-  return {
-    id: movie.id,
-    title: movie.title || movie.original_title || "",
-    release_date: movie.release_date || "",
-    overview: movie.overview || "",
-    tagline: movie.tagline || "",
-    runtime: movie.runtime || null,
-    vote_average: movie.vote_average || 0,
-    poster_path: movie.poster_path || null,
-    backdrop_path: movie.backdrop_path || null,
-    genres: (movie.genres || []).map((g) => g.name),
-    director: director ? director.name : "",
-    cast: ((movie.credits && movie.credits.cast) || [])
-      .slice(0, 4)
-      .map((c) => c.name),
-    trailerKey: trailer ? trailer.key : null,
-  };
-}
-
 // GET /api/movies/:id — full details for one movie, used by the Movie Details
-// page. Cache-first: a fully-detailed `movies` doc is served straight from Mongo
-// (no TMDB call). On a miss or a feed-only (partial) doc, fetch from TMDB with
-// credits + videos appended, return it, and persist with fullDetails:true so the
-// next view is served from cache. Registered AFTER /api/movies/search and
-// /api/movies/random so those literal paths aren't swallowed by the :id param.
+// page. Delegates to movieCache.retrieveMovie: a fully-detailed `movies` doc is
+// served straight from Mongo (no TMDB call); a miss/partial fetches from TMDB
+// (credits + videos), returns it, and persists with fullDetails:true so the next
+// view — here OR via AI enhance — is served from cache. Registered AFTER
+// /api/movies/search and /api/movies/random so those literal paths aren't swallowed
+// by the :id param.
 async function details(req, res) {
   const id = Math.trunc(Number(req.params.id));
   if (!Number.isFinite(id) || id <= 0) {
@@ -279,19 +247,7 @@ async function details(req, res) {
     throw err;
   }
 
-  // Served from Mongo when we already have the full detail fields.
-  const cached = await movieCache.getCachedDetail(id);
-  if (cached) return res.json({ ok: true, data: cached });
-
-  const movie = await tmdb(`/movie/${id}`, {
-    append_to_response: "credits,videos",
-  });
-  const payload = buildDetailPayload(movie);
-
-  // Persist the full detail (best-effort; flips fullDetails:true for next time).
-  await movieCache.saveDetail(id, movie, payload);
-
-  res.json({ ok: true, data: payload });
+  res.json({ ok: true, data: await movieCache.retrieveMovie(id) });
 }
 
 module.exports = {

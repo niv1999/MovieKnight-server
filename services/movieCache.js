@@ -21,6 +21,7 @@
 const mongoose = require("mongoose");
 const Movie = require("../models/Movie");
 const FeedCache = require("../models/FeedCache");
+const { tmdb } = require("./tmdb");
 
 // Is the shared Mongoose connection usable right now? 1 === connected. During a
 // cold start (state 2 = connecting) or when MONGODB_URI is unset (state 0) this
@@ -267,6 +268,55 @@ async function saveDetail(id, movie, payload) {
   }
 }
 
+// Build the GET /api/movies/:id detail payload from a raw TMDB /movie/:id response
+// (with credits + videos appended). Trimmed to what the page renders: overview,
+// genres, director, top cast, a YouTube trailer key. SAME shape as docToDetail, so a
+// fresh fetch and a cache hit are byte-for-byte identical.
+function buildDetailPayload(movie) {
+  const crew = (movie.credits && movie.credits.crew) || [];
+  const director = crew.find((c) => c.job === "Director");
+
+  const videos = (movie.videos && movie.videos.results) || [];
+  // Prefer an official YouTube "Trailer"; fall back to any YouTube clip.
+  const trailer =
+    videos.find((v) => v.site === "YouTube" && v.type === "Trailer") ||
+    videos.find((v) => v.site === "YouTube");
+
+  return {
+    id: movie.id,
+    title: movie.title || movie.original_title || "",
+    release_date: movie.release_date || "",
+    overview: movie.overview || "",
+    tagline: movie.tagline || "",
+    runtime: movie.runtime || null,
+    vote_average: movie.vote_average || 0,
+    poster_path: movie.poster_path || null,
+    backdrop_path: movie.backdrop_path || null,
+    genres: (movie.genres || []).map((g) => g.name),
+    director: director ? director.name : "",
+    cast: ((movie.credits && movie.credits.cast) || []).slice(0, 4).map((c) => c.name),
+    trailerKey: trailer ? trailer.key : null,
+  };
+}
+
+// Fetch-once-store-forever for ONE movie's full details, by TMDB id — the generic
+// "give me this movie, I don't care from where" primitive. Mongo first: a
+// fully-detailed doc is returned without touching TMDB. On a miss (or a feed-only
+// partial doc) it fetches /movie/:id with credits+videos, persists it with
+// fullDetails:true, and returns the SAME detail-payload shape either way. This is
+// how we WARM the cache: any caller that resolves a movie (the details page, AI
+// enhance, …) leaves it stored for the next one. Throws on a TMDB failure (e.g. a
+// 404 dead id); with Mongo unavailable it simply fetches without caching, so it
+// still works on an empty .env.
+async function retrieveMovie(id) {
+  const cached = await getCachedDetail(id);
+  if (cached) return cached; // Mongo hit — no TMDB call
+  const movie = await tmdb(`/movie/${id}`, { append_to_response: "credits,videos" });
+  const payload = buildDetailPayload(movie);
+  await saveDetail(id, movie, payload); // store forever (best-effort)
+  return payload;
+}
+
 // --- cache visibility (dev/QA) -------------------------------------------------
 
 // A snapshot of both cache tiers for GET /api/movies/cache-stats. Best-effort:
@@ -313,5 +363,6 @@ module.exports = {
   getFeed,
   getCachedDetail,
   saveDetail,
+  retrieveMovie,
   getStats,
 };

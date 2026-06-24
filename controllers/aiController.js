@@ -10,9 +10,10 @@
 //     the picker, TMDB records for search/enhance. Gemini only ever ranks/suggests;
 //     it never invents the data we return (we re-resolve everything ourselves).
 
+const { SchemaType } = require("@google/generative-ai");
 const Movie = require("../models/Movie");
 const { tmdb } = require("../services/tmdb");
-const { dbReady } = require("../services/movieCache");
+const { dbReady, retrieveMovie } = require("../services/movieCache");
 const { generateJsonArray } = require("../services/gemini");
 const { findOr404, assertOwner } = require("./collectionController");
 const { aiUsageFor, consumeAiAction, aiLimitError } = require("../services/aiQuota");
@@ -20,8 +21,50 @@ const { aiUsageFor, consumeAiAction, aiLimitError } = require("../services/aiQuo
 // Caps that keep us inside free-tier limits and bound the work per request.
 const MAX_PICK = 3; // "Let AI Choose" returns at most this many
 const MAX_SEARCH_RESULTS = 50; // "AI Search" resolves at most this many titles
-const ENHANCE_COUNT = 3; // "Enhance Collection" recommends exactly this many
+const ENHANCE_COUNT = 3; // "Enhance Collection" returns this many
+const MAX_ENHANCE_FETCH = 18; // ceiling on the per-reroll candidate buffer (see enhance)
 const TMDB_CONCURRENCY = 6; // parallel TMDB lookups when resolving AI titles
+
+// ---------------------------------------------------------------------------
+// Strict response schemas (Gemini responseSchema). These make the JSON shape a hard
+// contract enforced by the model, so we no longer rely on the prompt alone to keep
+// the output well-formed — a hallucinated/extra field or markdown wrapper can't
+// happen. The prompt still owns the CONTENT (what each field should contain).
+// ---------------------------------------------------------------------------
+const PICKER_SCHEMA = {
+  type: SchemaType.ARRAY,
+  items: {
+    type: SchemaType.OBJECT,
+    properties: {
+      movieId: { type: SchemaType.INTEGER }, // must echo an id from the provided list
+      reason: { type: SchemaType.STRING },
+    },
+    required: ["movieId", "reason"],
+  },
+};
+const SEARCH_SCHEMA = {
+  type: SchemaType.ARRAY,
+  items: {
+    type: SchemaType.OBJECT,
+    properties: {
+      title: { type: SchemaType.STRING },
+      year: { type: SchemaType.STRING }, // 4-digit release year
+    },
+    required: ["title", "year"],
+  },
+};
+const ENHANCE_SCHEMA = {
+  type: SchemaType.ARRAY,
+  items: {
+    type: SchemaType.OBJECT,
+    properties: {
+      title: { type: SchemaType.STRING },
+      year: { type: SchemaType.STRING }, // 4-digit release year
+      reason: { type: SchemaType.STRING },
+    },
+    required: ["title", "year", "reason"],
+  },
+};
 
 // Smart Reroll ("Try Again"): the client sends the ids currently on screen as
 // `exclude_ids`. We SOFT-filter them out of the new suggestions, but only while at
@@ -40,6 +83,24 @@ function parseExcludeIds(raw) {
     if (Number.isFinite(n)) set.add(n);
   }
   return set;
+}
+
+// Coerce a client `exclude_titles` payload (array of strings — the titles already
+// shown this session) into a clean, de-duped string[] for the prompt's "already
+// suggested, don't repeat" list. Bounded so a long session can't bloat the prompt.
+function parseTitleList(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const v of raw) {
+    const t = String(v || "").trim();
+    const key = t.toLowerCase();
+    if (t && !seen.has(key)) {
+      seen.add(key);
+      out.push(t);
+    }
+  }
+  return out.slice(0, 100);
 }
 
 // ---------------------------------------------------------------------------
@@ -207,8 +268,9 @@ async function picker(req, res) {
   const shuffled = shuffle(movies);
   const variationToken = Math.random().toString(36).slice(2, 10);
 
-  // Strict schema prompt: the model must echo back movieIds FROM the given list
-  // (so we can map them to real movies) and nothing else.
+  // The PICKER_SCHEMA enforces the [{ movieId, reason }] shape; the prompt owns the
+  // CONTENT: the model must echo back movieIds FROM the given list (so we can map
+  // them to real movies), each with a one-line reason.
   const aiPrompt = [
     "You are a film curator. From the JSON list of movies below, select EXACTLY",
     `${count} movie(s) that best match this request: "${prompt}".`,
@@ -220,9 +282,7 @@ async function picker(req, res) {
     exclude.size
       ? `Prefer NOT to pick these movieIds (already shown): ${[...exclude].join(", ")}.`
       : "",
-    'Respond with ONLY a JSON array of objects with this exact shape:',
-    '[{ "movieId": <number, the id field from the list>, "reason": "<one short sentence>" }]',
-    "No prose, no markdown, no code fences — just the JSON array.",
+    "For each pick, return its movieId (the id field from the list) and a one-sentence reason.",
     "",
     "MOVIES:",
     JSON.stringify(shuffled),
@@ -230,7 +290,7 @@ async function picker(req, res) {
 
   // Higher temperature here (vs. the 0.4 default) so the picks aren't locked to the
   // single "most obvious" answer — that's what makes Try Again feel alive.
-  const picks = await generateJsonArray(aiPrompt, { temperature: 1.0 });
+  const picks = await generateJsonArray(aiPrompt, { temperature: 1.0, schema: PICKER_SCHEMA });
 
   // Map the AI's ids back to real movie docs, dropping anything not actually in the
   // collection (guards against a hallucinated id). Preserve the AI's ordering.
@@ -273,16 +333,15 @@ async function search(req, res) {
   assertAiActionAvailable(req); // daily quota gate (spend happens on success below)
   const exclude = parseExcludeIds(req.body && req.body.exclude_ids); // Smart Reroll
 
+  // SEARCH_SCHEMA enforces the [{ title, year }] shape; the prompt owns the content.
   const aiPrompt = [
     "You are a movie search engine. For the request below, list the most",
     `relevant real, existing movies (up to ${MAX_SEARCH_RESULTS}), best match first.`,
     `REQUEST: "${query}"`,
-    "Respond with ONLY a JSON array of objects with this exact shape:",
-    '[{ "title": "<exact movie title>", "year": "<4-digit release year>" }]',
-    "No prose, no markdown, no code fences — just the JSON array.",
+    "For each, give the exact movie title and its 4-digit release year.",
   ].join("\n");
 
-  const suggestions = (await generateJsonArray(aiPrompt))
+  const suggestions = (await generateJsonArray(aiPrompt, { schema: SEARCH_SCHEMA }))
     .filter((s) => s && s.title)
     .slice(0, MAX_SEARCH_RESULTS);
 
@@ -302,44 +361,103 @@ async function search(req, res) {
 
 // ===========================================================================
 // Endpoint 3 — POST /api/ai/enhance/:id  ("Enhance Collection")
-// Param: :id (collectionId) → exactly 3 movies NOT already in the collection that
-// fit its taste, each with a reason. (Frontend lands later; endpoint ready now.)
+// Param: :id (collectionId). Body: { exclude_ids?, exclude_titles? } — everything
+// already shown this session (ids = hard filter, titles = prompt avoidance) so a
+// "Try Again" reroll never repeats. → up to ENHANCE_COUNT movies NOT already in the
+// collection that fit its taste, each with a reason. Warms the movie cache with the
+// full details of whatever it returns.
 // ===========================================================================
 async function enhance(req, res) {
   assertAiActionAvailable(req); // daily quota gate (spend happens on success below)
+  // "Try Again" sends the FULL set of everything offered this session: ids (for the
+  // hard post-filter) AND titles (for the prompt). Gemini invents titles, so naming
+  // them in the prompt is the ONLY way to actually stop it repeating — and the
+  // resolved movies are never written to the Movie cache, so the client (which
+  // showed them) is the only place those titles exist. That's why it sends them.
+  const exclude = parseExcludeIds(req.body && req.body.exclude_ids);
+  const excludeTitles = parseTitleList(req.body && req.body.exclude_titles);
   const collection = await loadOwnedCollection(req.params.id, req);
   const movies = await collectionMoviesForAi(collection);
 
-  // Titles already present, so we can ask Gemini to avoid them AND filter any it
-  // recommends anyway.
   const existingTitles = new Set(movies.map((m) => m.title.toLowerCase()));
   const existingIds = new Set((collection.items || []).map((it) => it.movieId));
 
+  // The collection's NAME often signals its intent (e.g. "Cozy Rainy Day", "90s
+  // Action") — feed it to the model so picks fit the theme, not just the titles.
+  const collectionName = String(collection.name || "").replace(/\s+/g, " ").trim().slice(0, 100);
+
+  // A one-off variation token + a higher temperature break the determinism that
+  // would otherwise return the same picks every press (same trick the picker uses).
+  const variationToken = Math.random().toString(36).slice(2, 10);
+
+  // Buffer = how many we must avoid + how many we return. Asking for this many means
+  // that EVEN IF the model ignores the avoid-list and re-suggests every excluded
+  // title, ENHANCE_COUNT genuinely-new ones still survive the hard filter — so a
+  // reroll can never come up short because of repeats. Capped for sanity (the
+  // title-avoidance + hard filter still prevent repeats beyond the cap; we might
+  // just return fewer than 3 once the AI truly runs dry). Best-recommendation first,
+  // so after filtering we keep the top picks.
+  const fetchCount = Math.min(exclude.size + ENHANCE_COUNT, MAX_ENHANCE_FETCH);
+
+  // ENHANCE_SCHEMA enforces the [{ title, year, reason }] shape; the prompt owns the content.
   const aiPrompt = [
     "You are a film recommender. Based on the JSON list of movies a user already",
-    `has in their collection, recommend EXACTLY ${ENHANCE_COUNT} real movies they`,
-    "would likely enjoy that are NOT already in the list.",
-    "Respond with ONLY a JSON array of objects with this exact shape:",
-    '[{ "title": "<exact movie title>", "year": "<4-digit release year>", "reason": "<one short sentence>" }]',
-    "No prose, no markdown, no code fences — just the JSON array.",
+    `has in their collection, recommend ${fetchCount} real movies they would enjoy`,
+    "that are NOT already in the list, ordered best-recommendation first.",
+    collectionName
+      ? `The collection is called "${collectionName}" — might indicate a certain theme/intent that could guide your picks.`
+      : "",
+    "For each, give the exact movie title, its 4-digit release year, and a one-sentence reason they'd enjoy it.",
+    `Make them varied. Variation token: ${variationToken}.`,
+    excludeTitles.length
+      ? `These have ALREADY been suggested to this user — every recommendation MUST be new, so do NOT include ANY of these: ${excludeTitles.join("; ")}.`
+      : "",
     "",
     "EXISTING COLLECTION:",
     JSON.stringify(movies),
   ].join("\n");
 
-  const suggestions = (await generateJsonArray(aiPrompt))
+  // Higher temperature (vs. the 0.4 default) so a reroll isn't locked to the single
+  // "most obvious" set — that's what makes Try Again feel alive.
+  const suggestions = (await generateJsonArray(aiPrompt, { temperature: 1.0, schema: ENHANCE_SCHEMA }))
     .filter((s) => s && s.title && !existingTitles.has(String(s.title).toLowerCase()))
-    .slice(0, ENHANCE_COUNT);
+    .slice(0, fetchCount);
 
-  // Resolve to TMDB and attach the AI's reasoning; drop any that collide with a
-  // movie already in the collection (the model can suggest one under a variant title).
-  let data = await resolveSuggestions(suggestions, (rec, movie) => ({
-    ...movie,
+  // Resolve each title → a real TMDB id (search), keeping the AI's order + reason.
+  const resolved = await resolveSuggestions(suggestions, (rec, movie) => ({
+    id: movie.id,
     reason: String(rec.reason || ""),
   }));
-  data = data.filter((m) => !existingIds.has(m.id));
 
-  const aiUsage = await consumeAiAction(req.user); // spend one action
+  // HARD filter (no fallback): never a movie already in the collection OR already
+  // shown this session. Take the top ENHANCE_COUNT — they're in recommendation order.
+  const picks = resolved
+    .filter((m) => !existingIds.has(m.id) && !exclude.has(m.id))
+    .slice(0, ENHANCE_COUNT);
+
+  // Warm the DB: fetch full details for the ones we'll show (a Mongo hit means no
+  // TMDB call) and store them forever, then build each card from the cached movie.
+  // One bad lookup just drops that card rather than failing the whole batch.
+  const cards = await Promise.all(
+    picks.map(async ({ id, reason }) => {
+      try {
+        const m = await retrieveMovie(id);
+        return {
+          id: m.id,
+          title: m.title,
+          poster_path: m.poster_path,
+          vote_average: m.vote_average,
+          release_date: m.release_date,
+          reason,
+        };
+      } catch (_) {
+        return null; // dead id / upstream blip — drop this one
+      }
+    })
+  );
+  const data = cards.filter(Boolean);
+
+  const aiUsage = await consumeAiAction(req.user); // spend one action (incl. Try Again)
   res.json({ ok: true, data, aiUsage });
 }
 
