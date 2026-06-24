@@ -77,8 +77,8 @@ function toCard(collection, coversById, author, isOwner) {
     sort: collection.sort || "added_desc", // remembered "Sort by"
     movieCount: ordered.length,
     movieIds: ordered.map((it) => it.movieId), // all TMDB ids — cheap membership checks (heart/eye)
-    covers, // bare TMDB paths (poster+backdrop) for the first ≤4 movies (client prefixes the CDN)
-    posters: covers.map((c) => c.poster).filter(Boolean), // flat list kept for the grid's image preload
+    covers, // first ≤4 movies as { poster, backdrop } bare TMDB paths (client prefixes the CDN
+            // and picks poster/backdrop per layout). The cover's single source of truth.
     likesCount: 0, // deferred (Explore) — always 0 for now
     savesCount: 0,
     author: author || null,
