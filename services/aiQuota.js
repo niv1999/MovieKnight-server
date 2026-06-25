@@ -11,7 +11,7 @@
 
 const User = require("../models/User");
 
-const DAILY_AI_LIMIT = 10;
+const DAILY_AI_LIMIT = 5;
 
 // Error `code` for "out of daily AI actions". Both the quota limit and an upstream
 // Gemini rate-limit surface as HTTP 429, so the client can't tell them apart by
