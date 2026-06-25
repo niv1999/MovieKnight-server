@@ -64,7 +64,7 @@ app.use(express.json({ limit: "2mb" }));
 
 // --- health check ---
 app.get("/", (req, res) => {
-  res.json({ ok: true, service: "movieknight-tmdb-proxy" });
+  res.json({ ok: true, service: "movieknight-server" });
 });
 
 // --- API routes (controllers + routes, the taught layout) ---
