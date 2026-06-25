@@ -1,0 +1,4164 @@
+{
+  "info": {
+    "name": "MovieKnight API",
+    "_postman_id": "movieknight-api-full-2026-06",
+    "description": "MovieKnight backend (Node/Express + MongoDB, TMDB and Gemini proxied server-side).\n\nBase URL: set `{{baseUrl}}` to `http://localhost:3000` (dev) or the deployed Render URL.\nBase path: every route lives under `/api` except `GET /` (health).\n\nResponse envelope (all `/api` routes):\n- Success: `{ \"ok\": true, \"data\": ... }`\n- Error: `{ \"ok\": false, \"error\": \"message\", \"code\"?: \"...\" }`\n\nAuth: protected routes need `Authorization: Bearer <token>`. The collection sends `{{token}}` as a Bearer token by default; public routes override this with No Auth. Signup and Login save the returned token into `{{token}}` automatically (see their Tests tab).\n\nStatus codes used: 200, 201, 400, 401, 404, 429, 500, 502, 504.\n\nVariables: `baseUrl`, `token`, `userId`, `collectionId`, `tmdbId`, `personId`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "66a1f2c4e5b3a1234567890a",
+      "type": "string"
+    },
+    {
+      "key": "collectionId",
+      "value": "66b0c1d2e3f4a5b6c7d8e9f0",
+      "type": "string"
+    },
+    {
+      "key": "tmdbId",
+      "value": "550",
+      "type": "string"
+    },
+    {
+      "key": "personId",
+      "value": "31",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "description": "Liveness check. No auth, no `/api` prefix.",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                ""
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "**What:** Health/liveness probe. Returns a fixed JSON ok flag and service name.\n\n**Auth:** None.\n\n**Params:** None.\n\nNote: this is the only route NOT under `/api`, so its 404 shape is `{ \"error\": \"Not found\" }` (no `ok` field)."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    ""
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"service\": \"movieknight-tmdb-proxy\"\n}"
+            },
+            {
+              "name": "404 Unknown route (non-/api shape)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/nope",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "nope"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "description": "Signup / login / me. bcryptjs password hashing + 7-day JWT.",
+      "item": [
+        {
+          "name": "Signup",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "signup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Movie Fan\",\n  \"email\": \"moviefan@example.com\",\n  \"username\": \"moviefan\",\n  \"password\": \"secret123\",\n  \"dateOfBirth\": \"1999-05-20\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "**What:** Create an account, seed the 3 default collections (Favorites, Already Watched, Watchlist), and return a JWT plus the safe user.\n\n**Auth:** None.\n\n**Body (JSON):**\n\n| Field | Type | Required | Description | Example |\n|---|---|---|---|---|\n| name | string | yes | Display name. | `Movie Fan` |\n| email | string | yes | Must match a basic email pattern; stored lowercased. | `moviefan@example.com` |\n| username | string | yes | Unique; trimmed, case-sensitive. | `moviefan` |\n| password | string | yes | Minimum 6 characters. | `secret123` |\n| dateOfBirth | string (date) | yes | Any value parseable by `Date` (ISO recommended). | `1999-05-20` |\n\n**Returns:** `data = { token, user }`. `user` never includes `passwordHash`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.ok && res.data && res.data.token) {",
+                  "  pm.collectionVariables.set('token', res.data.token);",
+                  "  if (res.data.user) pm.collectionVariables.set('userId', res.data.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "201 Created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/signup",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "signup"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Movie Fan\",\n  \"email\": \"moviefan@example.com\",\n  \"username\": \"moviefan\",\n  \"password\": \"secret123\",\n  \"dateOfBirth\": \"1999-05-20\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2YTFmMmM0ZTViM2ExMjM0NTY3ODkwYSIsImlhdCI6MTc1MDg0MzAwMCwiZXhwIjoxNzUxNDQ3ODAwfQ.3pZ8oQh0n2Yk1example_signature_not_real\",\n    \"user\": {\n      \"id\": \"66a1f2c4e5b3a1234567890a\",\n      \"username\": \"moviefan\",\n      \"email\": \"moviefan@example.com\",\n      \"name\": \"Movie Fan\",\n      \"bio\": \"\",\n      \"dateOfBirth\": \"1999-05-20T00:00:00.000Z\",\n      \"avatarUrl\": null,\n      \"countryCode\": null,\n      \"badges\": [],\n      \"aiUsage\": {\n        \"used\": 0,\n        \"remaining\": 5,\n        \"limit\": 5\n      },\n      \"createdAt\": \"2026-06-25T10:30:00.000Z\"\n    }\n  }\n}"
+            },
+            {
+              "name": "400 Missing fields",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/signup",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "signup"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"moviefan@example.com\",\n  \"username\": \"moviefan\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Missing required field(s): name, password, dateOfBirth\"\n}"
+            },
+            {
+              "name": "400 Invalid email",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/signup",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "signup"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Movie Fan\",\n  \"email\": \"not-an-email\",\n  \"username\": \"moviefan\",\n  \"password\": \"secret123\",\n  \"dateOfBirth\": \"1999-05-20\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Invalid email address\"\n}"
+            },
+            {
+              "name": "400 Password too short",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/signup",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "signup"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Movie Fan\",\n  \"email\": \"moviefan@example.com\",\n  \"username\": \"moviefan\",\n  \"password\": \"123\",\n  \"dateOfBirth\": \"1999-05-20\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Password must be at least 6 characters\"\n}"
+            },
+            {
+              "name": "400 Duplicate account",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/signup",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "signup"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Movie Fan\",\n  \"email\": \"moviefan@example.com\",\n  \"username\": \"moviefan\",\n  \"password\": \"secret123\",\n  \"dateOfBirth\": \"1999-05-20\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"An account with that email already exists\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emailOrUsername\": \"moviefan@example.com\",\n  \"password\": \"secret123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "**What:** Verify credentials by email OR username and return a JWT plus the safe user.\n\n**Auth:** None.\n\n**Body (JSON):**\n\n| Field | Type | Required | Description | Example |\n|---|---|---|---|---|\n| emailOrUsername | string | yes | Email (case-insensitive) or username (case-sensitive). | `moviefan@example.com` |\n| password | string | yes | Plaintext password to compare against the stored hash. | `secret123` |\n\n**Returns:** `data = { token, user }`. A bad identifier and a bad password both return the same `401` (no leak of which was wrong)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.ok && res.data && res.data.token) {",
+                  "  pm.collectionVariables.set('token', res.data.token);",
+                  "  if (res.data.user) pm.collectionVariables.set('userId', res.data.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/login",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "login"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"emailOrUsername\": \"moviefan@example.com\",\n  \"password\": \"secret123\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2YTFmMmM0ZTViM2ExMjM0NTY3ODkwYSIsImlhdCI6MTc1MDg0MzAwMCwiZXhwIjoxNzUxNDQ3ODAwfQ.3pZ8oQh0n2Yk1example_signature_not_real\",\n    \"user\": {\n      \"id\": \"66a1f2c4e5b3a1234567890a\",\n      \"username\": \"moviefan\",\n      \"email\": \"moviefan@example.com\",\n      \"name\": \"Movie Fan\",\n      \"bio\": \"\",\n      \"dateOfBirth\": \"1999-05-20T00:00:00.000Z\",\n      \"avatarUrl\": null,\n      \"countryCode\": null,\n      \"badges\": [],\n      \"aiUsage\": {\n        \"used\": 0,\n        \"remaining\": 5,\n        \"limit\": 5\n      },\n      \"createdAt\": \"2026-06-25T10:30:00.000Z\"\n    }\n  }\n}"
+            },
+            {
+              "name": "400 Missing fields",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/login",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "login"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"emailOrUsername\": \"moviefan@example.com\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"emailOrUsername and password are required\"\n}"
+            },
+            {
+              "name": "401 Invalid credentials",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/login",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "login"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"emailOrUsername\": \"moviefan@example.com\",\n  \"password\": \"wrongpass\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Invalid credentials\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get current user (me)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "**What:** Return the signed-in user's safe profile (re-loaded from the DB, so a deleted account fails).\n\n**Auth:** Bearer token required.\n\n**Params:** None.\n\n**Returns:** `data = { user }`."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/me",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "me"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"user\": {\n      \"id\": \"66a1f2c4e5b3a1234567890a\",\n      \"username\": \"moviefan\",\n      \"email\": \"moviefan@example.com\",\n      \"name\": \"Movie Fan\",\n      \"bio\": \"\",\n      \"dateOfBirth\": \"1999-05-20T00:00:00.000Z\",\n      \"avatarUrl\": null,\n      \"countryCode\": null,\n      \"badges\": [],\n      \"aiUsage\": {\n        \"used\": 0,\n        \"remaining\": 5,\n        \"limit\": 5\n      },\n      \"createdAt\": \"2026-06-25T10:30:00.000Z\"\n    }\n  }\n}"
+            },
+            {
+              "name": "401 Missing header",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/me",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "me"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Missing or malformed Authorization header\"\n}"
+            },
+            {
+              "name": "401 Invalid/expired token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/me",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "me"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Invalid or expired token\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "description": "Current-user profile updates. Never touches email/username/password.",
+      "item": [
+        {
+          "name": "Update my profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "me"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bio\": \"I rate everything against Fight Club.\",\n  \"name\": \"Movie Fan\",\n  \"countryCode\": \"US\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**What:** Update the signed-in user's own editable profile fields. Whitelist only; at least one field must be present.\n\n**Auth:** Bearer token required.\n\n**Body (JSON, all optional but at least one required):**\n\n| Field | Type | Required | Description | Example |\n|---|---|---|---|---|\n| bio | string | no | Trimmed, max 200 characters. | `I rate everything against Fight Club.` |\n| name | string | no | Display name, trimmed. | `Movie Fan` |\n| avatarUrl | string | no | Empty string (clears), an `data:image/...;base64,` URL, or an `http(s)://` URL. Max ~1.5MB. | `https://i.imgur.com/abc.png` |\n| countryCode | string | no | ISO 3166-1 alpha-2, trimmed. | `US` |\n\n**Returns:** `data = { user }` (updated safe user). `400` if the body has no recognised field."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/users/me",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "users",
+                    "me"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"bio\": \"I rate everything against Fight Club.\",\n  \"name\": \"Movie Fan\",\n  \"countryCode\": \"US\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"user\": {\n      \"id\": \"66a1f2c4e5b3a1234567890a\",\n      \"username\": \"moviefan\",\n      \"email\": \"moviefan@example.com\",\n      \"name\": \"Movie Fan\",\n      \"bio\": \"I rate everything against Fight Club.\",\n      \"dateOfBirth\": \"1999-05-20T00:00:00.000Z\",\n      \"avatarUrl\": null,\n      \"countryCode\": \"US\",\n      \"badges\": [],\n      \"aiUsage\": {\n        \"used\": 0,\n        \"remaining\": 5,\n        \"limit\": 5\n      },\n      \"createdAt\": \"2026-06-25T10:30:00.000Z\"\n    }\n  }\n}"
+            },
+            {
+              "name": "400 No updatable fields",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/users/me",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "users",
+                    "me"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"No updatable fields provided\"\n}"
+            },
+            {
+              "name": "400 Bio too long",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/users/me",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "users",
+                    "me"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"bio\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"bio must be 200 characters or fewer\"\n}"
+            },
+            {
+              "name": "400 Invalid avatarUrl",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/users/me",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "users",
+                    "me"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"avatarUrl\": \"ftp://example.com/a.png\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"avatarUrl must be an image data URL or http(s) URL\"\n}"
+            },
+            {
+              "name": "401 Unauthorized",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/users/me",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "users",
+                    "me"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"bio\": \"I rate everything against Fight Club.\",\n  \"name\": \"Movie Fan\",\n  \"countryCode\": \"US\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Missing or malformed Authorization header\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Movies",
+      "description": "TMDB-backed movie feed, search, random, details, and cache stats. Reads are public.",
+      "item": [
+        {
+          "name": "Search / discover feed",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/movies/search?sortBy=popularity&page=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "movies",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "",
+                  "description": "string, optional. Free-text title search. When present, ALL filters and sort are ignored (pure relevance). Empty/omitted = popular discover feed.",
+                  "disabled": true
+                },
+                {
+                  "key": "sortBy",
+                  "value": "popularity",
+                  "description": "string, optional. Semantic sort intent. One of: popularity (default), trending, rating_desc, rating_asc, title_asc, title_desc, year_desc, year_asc. Unknown = popularity. Alias: sort."
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "integer, optional. 1-500, default 1. Forwarded 1:1 to TMDB (20 results per page)."
+                },
+                {
+                  "key": "genre",
+                  "value": "",
+                  "description": "string, optional. One TMDB genre id or comma/pipe-joined ids (e.g. 28,12). Multi = OR.",
+                  "disabled": true
+                },
+                {
+                  "key": "yearFrom",
+                  "value": "",
+                  "description": "integer, optional. Inclusive release-year lower bound (4-digit).",
+                  "disabled": true
+                },
+                {
+                  "key": "yearTo",
+                  "value": "",
+                  "description": "integer, optional. Inclusive release-year upper bound (4-digit).",
+                  "disabled": true
+                },
+                {
+                  "key": "minRating",
+                  "value": "",
+                  "description": "number, optional. 0-10 vote-average floor.",
+                  "disabled": true
+                },
+                {
+                  "key": "minVotes",
+                  "value": "",
+                  "description": "integer, optional. Minimum TMDB vote count (quality floor). Rating sorts default this to 50 when unset.",
+                  "disabled": true
+                },
+                {
+                  "key": "language",
+                  "value": "",
+                  "description": "string, optional. ISO 639-1 original language (e.g. en, ja, ko).",
+                  "disabled": true
+                },
+                {
+                  "key": "with_cast",
+                  "value": "",
+                  "description": "string, optional. TMDB person id (actor). Resolve via /api/people/search.",
+                  "disabled": true
+                },
+                {
+                  "key": "with_crew",
+                  "value": "",
+                  "description": "string, optional. TMDB person id (director). Resolve via /api/people/search.",
+                  "disabled": true
+                },
+                {
+                  "key": "providers",
+                  "value": "",
+                  "description": "string, optional. One or comma/pipe-joined TMDB watch-provider ids (e.g. 8,9). OR semantics. Alias: with_watch_providers.",
+                  "disabled": true
+                },
+                {
+                  "key": "watch_region",
+                  "value": "US",
+                  "description": "string, optional. ISO 3166-1 region for provider filtering. Default US (required by TMDB whenever providers is set).",
+                  "disabled": true
+                },
+                {
+                  "key": "certification",
+                  "value": "",
+                  "description": "string, optional. Exact age rating (e.g. R, PG-13).",
+                  "disabled": true
+                },
+                {
+                  "key": "certification_country",
+                  "value": "US",
+                  "description": "string, optional. ISO 3166-1 country for the certification. Default US.",
+                  "disabled": true
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "**What:** The main movie feed with continuous pagination. Two modes: free-text (`q` present) returns TMDB relevance results; empty `q` returns the discover feed with the chosen sort + every filter applied natively.\n\n**Auth:** None.\n\n**Query params:** see the Params tab; common ones below.\n\n| Param | Type | Required | Description | Example |\n|---|---|---|---|---|\n| q | string | no | Title text. Present = relevance search (filters + sort ignored). | `inception` |\n| sortBy | string | no | popularity (default), trending, rating_desc, rating_asc, title_asc, title_desc, year_desc, year_asc. Alias `sort`. | `trending` |\n| genre | string | no | TMDB genre id, or comma/pipe list (OR). | `28,12` |\n| yearFrom / yearTo | integer | no | Inclusive 4-digit release-year range. | `1990` / `1999` |\n| minRating | number | no | 0-10 vote-average floor. | `7` |\n| minVotes | integer | no | Minimum vote count. | `1000` |\n| language | string | no | ISO 639-1 original language. | `en` |\n| with_cast / with_crew | string | no | TMDB person id (actor / director). | `31` |\n| providers | string | no | TMDB provider id(s), comma/pipe list (OR). Needs watch_region. | `8` |\n| watch_region | string | no | Region for providers, default US. | `US` |\n| certification | string | no | Exact age rating. Needs certification_country (default US). | `R` |\n| page | integer | no | 1-500, default 1. | `1` |\n\n**Returns:** `data = [movie]` (raw TMDB list objects). Empty array only when TMDB has no more pages."
+          },
+          "response": [
+            {
+              "name": "200 Discover feed (default)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/movies/search?sortBy=popularity&page=1",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "movies",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": "",
+                      "description": "string, optional. Free-text title search. When present, ALL filters and sort are ignored (pure relevance). Empty/omitted = popular discover feed.",
+                      "disabled": true
+                    },
+                    {
+                      "key": "sortBy",
+                      "value": "popularity",
+                      "description": "string, optional. Semantic sort intent. One of: popularity (default), trending, rating_desc, rating_asc, title_asc, title_desc, year_desc, year_asc. Unknown = popularity. Alias: sort."
+                    },
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "description": "integer, optional. 1-500, default 1. Forwarded 1:1 to TMDB (20 results per page)."
+                    },
+                    {
+                      "key": "genre",
+                      "value": "",
+                      "description": "string, optional. One TMDB genre id or comma/pipe-joined ids (e.g. 28,12). Multi = OR.",
+                      "disabled": true
+                    },
+                    {
+                      "key": "yearFrom",
+                      "value": "",
+                      "description": "integer, optional. Inclusive release-year lower bound (4-digit).",
+                      "disabled": true
+                    },
+                    {
+                      "key": "yearTo",
+                      "value": "",
+                      "description": "integer, optional. Inclusive release-year upper bound (4-digit).",
+                      "disabled": true
+                    },
+                    {
+                      "key": "minRating",
+                      "value": "",
+                      "description": "number, optional. 0-10 vote-average floor.",
+                      "disabled": true
+                    },
+                    {
+                      "key": "minVotes",
+                      "value": "",
+                      "description": "integer, optional. Minimum TMDB vote count (quality floor). Rating sorts default this to 50 when unset.",
+                      "disabled": true
+                    },
+                    {
+                      "key": "language",
+                      "value": "",
+                      "description": "string, optional. ISO 639-1 original language (e.g. en, ja, ko).",
+                      "disabled": true
+                    },
+                    {
+                      "key": "with_cast",
+                      "value": "",
+                      "description": "string, optional. TMDB person id (actor). Resolve via /api/people/search.",
+                      "disabled": true
+                    },
+                    {
+                      "key": "with_crew",
+                      "value": "",
+                      "description": "string, optional. TMDB person id (director). Resolve via /api/people/search.",
+                      "disabled": true
+                    },
+                    {
+                      "key": "providers",
+                      "value": "",
+                      "description": "string, optional. One or comma/pipe-joined TMDB watch-provider ids (e.g. 8,9). OR semantics. Alias: with_watch_providers.",
+                      "disabled": true
+                    },
+                    {
+                      "key": "watch_region",
+                      "value": "US",
+                      "description": "string, optional. ISO 3166-1 region for provider filtering. Default US (required by TMDB whenever providers is set).",
+                      "disabled": true
+                    },
+                    {
+                      "key": "certification",
+                      "value": "",
+                      "description": "string, optional. Exact age rating (e.g. R, PG-13).",
+                      "disabled": true
+                    },
+                    {
+                      "key": "certification_country",
+                      "value": "US",
+                      "description": "string, optional. ISO 3166-1 country for the certification. Default US.",
+                      "disabled": true
+                    }
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"adult\": false,\n      \"backdrop_path\": \"/hZkgoQYus5vegHoetLkCJzb17zJ.jpg\",\n      \"genre_ids\": [\n        18\n      ],\n      \"id\": 550,\n      \"original_language\": \"en\",\n      \"original_title\": \"Fight Club\",\n      \"overview\": \"A ticking-time-bomb insomniac and a slippery soap salesman channel primal male aggression into a shocking new form of therapy.\",\n      \"popularity\": 65.482,\n      \"poster_path\": \"/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg\",\n      \"release_date\": \"1999-10-15\",\n      \"title\": \"Fight Club\",\n      \"video\": false,\n      \"vote_average\": 8.438,\n      \"vote_count\": 28543\n    },\n    {\n      \"adult\": false,\n      \"backdrop_path\": \"/s3TBrRGB1iav7gFOCNx3H31MoES.jpg\",\n      \"genre_ids\": [\n        28,\n        878,\n        12\n      ],\n      \"id\": 27205,\n      \"original_language\": \"en\",\n      \"original_title\": \"Inception\",\n      \"overview\": \"Cobb, a skilled thief who commits corporate espionage by infiltrating the subconscious of his targets, is offered a chance to regain his old life.\",\n      \"popularity\": 95.13,\n      \"poster_path\": \"/oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg\",\n      \"release_date\": \"2010-07-15\",\n      \"title\": \"Inception\",\n      \"video\": false,\n      \"vote_average\": 8.369,\n      \"vote_count\": 36219\n    }\n  ]\n}"
+            },
+            {
+              "name": "200 Free-text q=inception",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/movies/search?q=inception",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "movies",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": "inception"
+                    }
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"adult\": false,\n      \"backdrop_path\": \"/s3TBrRGB1iav7gFOCNx3H31MoES.jpg\",\n      \"genre_ids\": [\n        28,\n        878,\n        12\n      ],\n      \"id\": 27205,\n      \"original_language\": \"en\",\n      \"original_title\": \"Inception\",\n      \"overview\": \"Cobb, a skilled thief who commits corporate espionage by infiltrating the subconscious of his targets, is offered a chance to regain his old life.\",\n      \"popularity\": 95.13,\n      \"poster_path\": \"/oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg\",\n      \"release_date\": \"2010-07-15\",\n      \"title\": \"Inception\",\n      \"video\": false,\n      \"vote_average\": 8.369,\n      \"vote_count\": 36219\n    }\n  ]\n}"
+            },
+            {
+              "name": "200 Filtered (genre+year+minRating)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/movies/search?genre=878&yearFrom=2008&yearTo=2012&minRating=8&sortBy=rating_desc",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "movies",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "genre",
+                      "value": "878"
+                    },
+                    {
+                      "key": "yearFrom",
+                      "value": "2008"
+                    },
+                    {
+                      "key": "yearTo",
+                      "value": "2012"
+                    },
+                    {
+                      "key": "minRating",
+                      "value": "8"
+                    },
+                    {
+                      "key": "sortBy",
+                      "value": "rating_desc"
+                    }
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"adult\": false,\n      \"backdrop_path\": \"/s3TBrRGB1iav7gFOCNx3H31MoES.jpg\",\n      \"genre_ids\": [\n        28,\n        878,\n        12\n      ],\n      \"id\": 27205,\n      \"original_language\": \"en\",\n      \"original_title\": \"Inception\",\n      \"overview\": \"Cobb, a skilled thief who commits corporate espionage by infiltrating the subconscious of his targets, is offered a chance to regain his old life.\",\n      \"popularity\": 95.13,\n      \"poster_path\": \"/oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg\",\n      \"release_date\": \"2010-07-15\",\n      \"title\": \"Inception\",\n      \"video\": false,\n      \"vote_average\": 8.369,\n      \"vote_count\": 36219\n    }\n  ]\n}"
+            },
+            {
+              "name": "200 Empty (no more pages)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/movies/search?page=500",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "movies",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "500"
+                    }
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": []\n}"
+            }
+          ]
+        },
+        {
+          "name": "Random movie",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/movies/random",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "movies",
+                "random"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "**What:** Return one random non-adult movie (brute-force TMDB id lookup, with a popular-feed fallback if the loop maxes out).\n\n**Auth:** None.\n\n**Params:** None.\n\n**Returns:** `data = movie` (raw TMDB `/movie/:id` object)."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/movies/random",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "movies",
+                    "random"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"adult\": false,\n    \"backdrop_path\": \"/9BBTo63ANSmhC4e6r62OmYVix.jpg\",\n    \"belongs_to_collection\": null,\n    \"budget\": 63000000,\n    \"genres\": [\n      {\n        \"id\": 18,\n        \"name\": \"Drama\"\n      }\n    ],\n    \"homepage\": \"\",\n    \"id\": 550,\n    \"imdb_id\": \"tt0137523\",\n    \"original_language\": \"en\",\n    \"original_title\": \"Fight Club\",\n    \"overview\": \"A ticking-time-bomb insomniac and a slippery soap salesman channel primal male aggression into a shocking new form of therapy.\",\n    \"popularity\": 65.482,\n    \"poster_path\": \"/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg\",\n    \"production_companies\": [\n      {\n        \"id\": 711,\n        \"name\": \"Fox 2000 Pictures\",\n        \"origin_country\": \"US\"\n      }\n    ],\n    \"release_date\": \"1999-10-15\",\n    \"revenue\": 100853753,\n    \"runtime\": 139,\n    \"status\": \"Released\",\n    \"tagline\": \"Mischief. Mayhem. Soap.\",\n    \"title\": \"Fight Club\",\n    \"video\": false,\n    \"vote_average\": 8.438,\n    \"vote_count\": 28543\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Cache stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/movies/cache-stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "movies",
+                "cache-stats"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "**What:** Read-only snapshot of both cache tiers (movie docs + feed pages) for dev/QA.\n\n**Auth:** None.\n\n**Params:** None.\n\n**Returns:** `data` with cache counts and TTL info, or `{ dbConnected: false }` when Mongo is unavailable."
+          },
+          "response": [
+            {
+              "name": "200 DB connected",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/movies/cache-stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "movies",
+                    "cache-stats"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"dbConnected\": true,\n    \"movies\": {\n      \"total\": 412,\n      \"detailed\": 57,\n      \"partial\": 355\n    },\n    \"feedCache\": {\n      \"entries\": 23,\n      \"ttlSeconds\": 43200,\n      \"oldestEntry\": \"2026-06-25T02:10:00.000Z\",\n      \"newestEntry\": \"2026-06-25T11:45:00.000Z\",\n      \"oldestExpiresAt\": \"2026-06-25T14:10:00.000Z\"\n    }\n  }\n}"
+            },
+            {
+              "name": "200 DB not connected",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/movies/cache-stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "movies",
+                    "cache-stats"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"dbConnected\": false\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Movie details by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/movies/{{tmdbId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "movies",
+                "{{tmdbId}}"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "**What:** Full details for one movie (overview, genres, director, top 4 cast, YouTube trailer key). Served from Mongo when cached, else fetched from TMDB and stored.\n\n**Auth:** None.\n\n**Path params:**\n\n| Param | Type | Required | Description | Example |\n|---|---|---|---|---|\n| id | integer | yes | Numeric TMDB movie id (> 0). | `550` |\n\n**Returns:** `data = movie detail`. `400` on a non-numeric/<=0 id; `404` (as 'Movie service request failed') on a valid id that does not exist upstream."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/movies/{{tmdbId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "movies",
+                    "{{tmdbId}}"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"id\": 550,\n    \"title\": \"Fight Club\",\n    \"release_date\": \"1999-10-15\",\n    \"overview\": \"A ticking-time-bomb insomniac and a slippery soap salesman channel primal male aggression into a shocking new form of therapy.\",\n    \"tagline\": \"Mischief. Mayhem. Soap.\",\n    \"runtime\": 139,\n    \"vote_average\": 8.438,\n    \"poster_path\": \"/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg\",\n    \"backdrop_path\": \"/hZkgoQYus5vegHoetLkCJzb17zJ.jpg\",\n    \"genres\": [\n      \"Drama\"\n    ],\n    \"director\": \"David Fincher\",\n    \"cast\": [\n      \"Edward Norton\",\n      \"Brad Pitt\",\n      \"Meat Loaf\",\n      \"Zach Grenier\"\n    ],\n    \"trailerKey\": \"BdJKm16Co6M\"\n  }\n}"
+            },
+            {
+              "name": "400 Invalid id",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/movies/abc",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "movies",
+                    "abc"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Invalid movie id\"\n}"
+            },
+            {
+              "name": "404 Not found upstream",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/movies/999999999",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "movies",
+                    "999999999"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Movie service request failed\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "People",
+      "description": "Actor/director lookups for the cast/crew filters. Reads are public.",
+      "item": [
+        {
+          "name": "People search",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/people/search?q=tom%20hanks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "people",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "tom hanks",
+                  "description": "string, optional (alias: query). Name to search. Empty/omitted returns data: []."
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "**What:** Search TMDB people (actors/directors) by name. Use the returned `id` as `with_cast` or `with_crew` in movie search.\n\n**Auth:** None.\n\n**Query params:**\n\n| Param | Type | Required | Description | Example |\n|---|---|---|---|---|\n| q | string | no | Name text. Alias `query`. Empty/omitted returns `data: []`. | `tom hanks` |\n\n**Returns:** `data = [{ id, name, profile_path, known_for_department }]`."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/people/search?q=tom%20hanks",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "people",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": "tom hanks",
+                      "description": "string, optional (alias: query). Name to search. Empty/omitted returns data: []."
+                    }
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"id\": 31,\n      \"name\": \"Tom Hanks\",\n      \"profile_path\": \"/xndWFsBlClOJFRdhSt4NBwiPq2o.jpg\",\n      \"known_for_department\": \"Acting\"\n    }\n  ]\n}"
+            },
+            {
+              "name": "200 Empty query",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/people/search?q=",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "people",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": ""
+                    }
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": []\n}"
+            }
+          ]
+        },
+        {
+          "name": "Popular people",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/people/popular",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "people",
+                "popular"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "integer, optional. 1-500, default 1.",
+                  "disabled": true
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "**What:** Popular, English-biased people to pre-fill the actor/director dropdowns before the user types. Returns up to 20 per page.\n\n**Auth:** None.\n\n**Query params:**\n\n| Param | Type | Required | Description | Example |\n|---|---|---|---|---|\n| page | integer | no | 1-500, default 1. | `1` |\n\n**Returns:** `data = [{ id, name, profile_path, known_for_department }]`."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/people/popular",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "people",
+                    "popular"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "description": "integer, optional. 1-500, default 1.",
+                      "disabled": true
+                    }
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"id\": 31,\n      \"name\": \"Tom Hanks\",\n      \"profile_path\": \"/xndWFsBlClOJFRdhSt4NBwiPq2o.jpg\",\n      \"known_for_department\": \"Acting\"\n    },\n    {\n      \"id\": 525,\n      \"name\": \"Christopher Nolan\",\n      \"profile_path\": \"/xuAjFHvkPxgQQUNh5Si6r6Bx0ce.jpg\",\n      \"known_for_department\": \"Directing\"\n    }\n  ]\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Catalog",
+      "description": "Static filter metadata (genres, US streaming providers). Memoized 30 days in-process.",
+      "item": [
+        {
+          "name": "Genres",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/genres",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genres"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "**What:** The TMDB movie genre list for filter dropdowns.\n\n**Auth:** None.\n\n**Params:** None.\n\n**Returns:** `data = [{ id, name }]`."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/genres",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "genres"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"id\": 28,\n      \"name\": \"Action\"\n    },\n    {\n      \"id\": 12,\n      \"name\": \"Adventure\"\n    },\n    {\n      \"id\": 16,\n      \"name\": \"Animation\"\n    },\n    {\n      \"id\": 35,\n      \"name\": \"Comedy\"\n    },\n    {\n      \"id\": 18,\n      \"name\": \"Drama\"\n    },\n    {\n      \"id\": 878,\n      \"name\": \"Science Fiction\"\n    },\n    {\n      \"id\": 53,\n      \"name\": \"Thriller\"\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Providers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/providers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "providers"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "**What:** US watch/streaming providers for the provider filter (trimmed to the fields the UI uses).\n\n**Auth:** None.\n\n**Params:** None.\n\n**Returns:** `data = [{ provider_id, provider_name, logo_path, display_priority }]`."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/providers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "providers"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"provider_id\": 8,\n      \"provider_name\": \"Netflix\",\n      \"logo_path\": \"/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg\",\n      \"display_priority\": 0\n    },\n    {\n      \"provider_id\": 9,\n      \"provider_name\": \"Amazon Prime Video\",\n      \"logo_path\": \"/emthp39XA2YScoYL1p0sdbAH2WA.jpg\",\n      \"display_priority\": 2\n    },\n    {\n      \"provider_id\": 337,\n      \"provider_name\": \"Disney Plus\",\n      \"logo_path\": \"/97yvRBw1GzX7fXprcF80er19ot.jpg\",\n      \"display_priority\": 4\n    },\n    {\n      \"provider_id\": 1899,\n      \"provider_name\": \"Max\",\n      \"logo_path\": \"/jbe4gVSfRlbPTdESXhEKpornsfu.jpg\",\n      \"display_priority\": 5\n    }\n  ]\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Collections",
+      "description": "Collection CRUD + movie membership. All routes require Bearer. Mutations are owner-only and return 404 (never 403) for someone else's list.",
+      "item": [
+        {
+          "name": "List my collections",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections"
+              ],
+              "query": [
+                {
+                  "key": "isDefault",
+                  "value": "",
+                  "description": "string, optional. 'true' = only the 3 default lists; 'false' = only custom lists; omitted = all.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "**What:** The signed-in user's collections as lightweight cards (defaults first, then by creation order).\n\n**Auth:** Bearer token required.\n\n**Query params:**\n\n| Param | Type | Required | Description | Example |\n|---|---|---|---|---|\n| isDefault | string | no | `true` = defaults only (Favorites/Already Watched/Watchlist); `false` = custom only; omitted = all. | `true` |\n\n**Returns:** `data = [card]`."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections"
+                  ],
+                  "query": [
+                    {
+                      "key": "isDefault",
+                      "value": "",
+                      "description": "string, optional. 'true' = only the 3 default lists; 'false' = only custom lists; omitted = all.",
+                      "disabled": true
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"id\": \"66b0c1d2e3f4a5b6c7d8e9f0\",\n      \"name\": \"Favorites\",\n      \"isDefault\": true,\n      \"isPublic\": false,\n      \"posterUrl\": null,\n      \"sort\": \"added_desc\",\n      \"movieCount\": 2,\n      \"movieIds\": [\n        550,\n        27205\n      ],\n      \"covers\": [\n        {\n          \"poster\": \"/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg\",\n          \"backdrop\": \"/hZkgoQYus5vegHoetLkCJzb17zJ.jpg\"\n        },\n        {\n          \"poster\": \"/oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg\",\n          \"backdrop\": \"/s3TBrRGB1iav7gFOCNx3H31MoES.jpg\"\n        }\n      ],\n      \"likesCount\": 0,\n      \"savesCount\": 0,\n      \"author\": \"moviefan\",\n      \"isOwner\": true,\n      \"createdAt\": \"2026-06-25T10:30:00.000Z\"\n    },\n    {\n      \"id\": \"66b0c1d2e3f4a5b6c7d8e9f1\",\n      \"name\": \"Already Watched\",\n      \"isDefault\": true,\n      \"isPublic\": false,\n      \"posterUrl\": null,\n      \"sort\": \"added_desc\",\n      \"movieCount\": 0,\n      \"movieIds\": [],\n      \"covers\": [],\n      \"likesCount\": 0,\n      \"savesCount\": 0,\n      \"author\": \"moviefan\",\n      \"isOwner\": true,\n      \"createdAt\": \"2026-06-25T10:30:00.000Z\"\n    },\n    {\n      \"id\": \"66b0c1d2e3f4a5b6c7d8e9f2\",\n      \"name\": \"Watchlist\",\n      \"isDefault\": true,\n      \"isPublic\": false,\n      \"posterUrl\": null,\n      \"sort\": \"added_desc\",\n      \"movieCount\": 0,\n      \"movieIds\": [],\n      \"covers\": [],\n      \"likesCount\": 0,\n      \"savesCount\": 0,\n      \"author\": \"moviefan\",\n      \"isOwner\": true,\n      \"createdAt\": \"2026-06-25T10:30:00.000Z\"\n    }\n  ]\n}"
+            },
+            {
+              "name": "200 Defaults only (?isDefault=true)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections?isDefault=true",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections"
+                  ],
+                  "query": [
+                    {
+                      "key": "isDefault",
+                      "value": "true"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"id\": \"66b0c1d2e3f4a5b6c7d8e9f0\",\n      \"name\": \"Favorites\",\n      \"isDefault\": true,\n      \"isPublic\": false,\n      \"posterUrl\": null,\n      \"sort\": \"added_desc\",\n      \"movieCount\": 2,\n      \"movieIds\": [\n        550,\n        27205\n      ],\n      \"covers\": [\n        {\n          \"poster\": \"/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg\",\n          \"backdrop\": \"/hZkgoQYus5vegHoetLkCJzb17zJ.jpg\"\n        },\n        {\n          \"poster\": \"/oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg\",\n          \"backdrop\": \"/s3TBrRGB1iav7gFOCNx3H31MoES.jpg\"\n        }\n      ],\n      \"likesCount\": 0,\n      \"savesCount\": 0,\n      \"author\": \"moviefan\",\n      \"isOwner\": true,\n      \"createdAt\": \"2026-06-25T10:30:00.000Z\"\n    }\n  ]\n}"
+            },
+            {
+              "name": "401 Unauthorized",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections"
+                  ],
+                  "query": [
+                    {
+                      "key": "isDefault",
+                      "value": "",
+                      "description": "string, optional. 'true' = only the 3 default lists; 'false' = only custom lists; omitted = all.",
+                      "disabled": true
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Missing or malformed Authorization header\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create collection",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Sci-Fi Night\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**What:** Create a new empty collection. Blank/omitted name auto-names `My Collection N`.\n\n**Auth:** Bearer token required.\n\n**Body (JSON):**\n\n| Field | Type | Required | Description | Example |\n|---|---|---|---|---|\n| name | string | no | Title, trimmed, capped at 60 chars. Blank = `My Collection N`. | `Sci-Fi Night` |\n\n**Returns:** `data = card` (201)."
+          },
+          "response": [
+            {
+              "name": "201 Created (named)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Sci-Fi Night\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"id\": \"66b0c1d2e3f4a5b6c7d8e9f5\",\n    \"name\": \"Sci-Fi Night\",\n    \"isDefault\": false,\n    \"isPublic\": false,\n    \"posterUrl\": null,\n    \"sort\": \"added_desc\",\n    \"movieCount\": 0,\n    \"movieIds\": [],\n    \"covers\": [],\n    \"likesCount\": 0,\n    \"savesCount\": 0,\n    \"author\": \"moviefan\",\n    \"isOwner\": true,\n    \"createdAt\": \"2026-06-25T11:00:00.000Z\"\n  }\n}"
+            },
+            {
+              "name": "201 Created (auto-named)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"id\": \"66b0c1d2e3f4a5b6c7d8e9f5\",\n    \"name\": \"My Collection 1\",\n    \"isDefault\": false,\n    \"isPublic\": false,\n    \"posterUrl\": null,\n    \"sort\": \"added_desc\",\n    \"movieCount\": 0,\n    \"movieIds\": [],\n    \"covers\": [],\n    \"likesCount\": 0,\n    \"savesCount\": 0,\n    \"author\": \"moviefan\",\n    \"isOwner\": true,\n    \"createdAt\": \"2026-06-25T11:00:00.000Z\"\n  }\n}"
+            },
+            {
+              "name": "401 Unauthorized",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Sci-Fi Night\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Missing or malformed Authorization header\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get collection (with movies)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                "{{collectionId}}"
+              ]
+            },
+            "description": "**What:** One collection plus its joined movies. Owner sees their own; a logged-in non-owner sees a PUBLIC list in visitor mode; a private/foreign list is 404.\n\n**Auth:** Bearer token required.\n\n**Path params:**\n\n| Param | Type | Required | Description | Example |\n|---|---|---|---|---|\n| id | string | yes | Collection ObjectId. | `66b0c1d2e3f4a5b6c7d8e9f0` |\n\n**Returns:** `data = full` (card identity + `authorId` + `movies[]`)."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"id\": \"66b0c1d2e3f4a5b6c7d8e9f0\",\n    \"name\": \"Favorites\",\n    \"isDefault\": true,\n    \"isPublic\": false,\n    \"posterUrl\": null,\n    \"sort\": \"added_desc\",\n    \"author\": \"moviefan\",\n    \"authorId\": \"66a1f2c4e5b3a1234567890a\",\n    \"isOwner\": true,\n    \"movieCount\": 2,\n    \"likesCount\": 0,\n    \"savesCount\": 0,\n    \"createdAt\": \"2026-06-25T10:30:00.000Z\",\n    \"movies\": [\n      {\n        \"id\": 550,\n        \"title\": \"Fight Club\",\n        \"poster_path\": \"/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg\",\n        \"vote_average\": 8.438,\n        \"release_date\": \"1999-10-15\",\n        \"releaseYear\": 1999,\n        \"genre_ids\": [\n          18\n        ],\n        \"provider_ids\": [\n          8\n        ],\n        \"addedAt\": \"2026-06-25T10:31:00.000Z\",\n        \"sortOrder\": 0\n      },\n      {\n        \"id\": 27205,\n        \"title\": \"Inception\",\n        \"poster_path\": \"/oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg\",\n        \"vote_average\": 8.369,\n        \"release_date\": \"2010-07-15\",\n        \"releaseYear\": 2010,\n        \"genre_ids\": [\n          28,\n          878,\n          12\n        ],\n        \"provider_ids\": [\n          9,\n          1899\n        ],\n        \"addedAt\": \"2026-06-25T10:32:00.000Z\",\n        \"sortOrder\": 0\n      }\n    ]\n  }\n}"
+            },
+            {
+              "name": "404 Not found / private",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Collection not found\"\n}"
+            },
+            {
+              "name": "401 Unauthorized",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Missing or malformed Authorization header\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update collection (rename / publish / sort)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                "{{collectionId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Favorite Films\",\n  \"isPublic\": true,\n  \"sort\": \"year_desc\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**What:** Owner-only update for rename, publish/unpublish, and remembered sort. At least one recognised field required.\n\n**Auth:** Bearer token required.\n\n**Body (JSON, all optional but at least one required):**\n\n| Field | Type | Required | Description | Example |\n|---|---|---|---|---|\n| name | string | no | New title (trimmed, max 60). Rejected for default lists. | `Favorite Films` |\n| isPublic | boolean | no | Publish (true) / unpublish (false). Allowed for default lists. | `true` |\n| sort | string | no | One of: added_desc, added_asc, title_asc, title_desc, year_desc, year_asc. | `year_desc` |\n\n**Returns:** `data = card`. Setting a field to its current value is a valid no-op (still 200)."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Favorite Films\",\n  \"isPublic\": true,\n  \"sort\": \"year_desc\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"id\": \"66b0c1d2e3f4a5b6c7d8e9f5\",\n    \"name\": \"Favorite Films\",\n    \"isDefault\": false,\n    \"isPublic\": true,\n    \"posterUrl\": null,\n    \"sort\": \"year_desc\",\n    \"movieCount\": 0,\n    \"movieIds\": [],\n    \"covers\": [],\n    \"likesCount\": 0,\n    \"savesCount\": 0,\n    \"author\": \"moviefan\",\n    \"isOwner\": true,\n    \"createdAt\": \"2026-06-25T11:00:00.000Z\"\n  }\n}"
+            },
+            {
+              "name": "400 No fields",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"No updatable fields provided\"\n}"
+            },
+            {
+              "name": "400 Invalid sort",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sort\": \"rating_desc\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Invalid sort option\"\n}"
+            },
+            {
+              "name": "400 Renaming a default list",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Renamed Favorites\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Default collections can't be renamed or deleted\"\n}"
+            },
+            {
+              "name": "404 Not the owner / missing",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Favorite Films\",\n  \"isPublic\": true,\n  \"sort\": \"year_desc\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Collection not found\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Delete collection",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                "{{collectionId}}"
+              ]
+            },
+            "description": "**What:** Owner-only delete. The 3 default lists cannot be deleted.\n\n**Auth:** Bearer token required.\n\n**Path params:**\n\n| Param | Type | Required | Description | Example |\n|---|---|---|---|---|\n| id | string | yes | Collection ObjectId. | `66b0c1d2e3f4a5b6c7d8e9f5` |\n\n**Returns:** `data = { deleted: true, id }`."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"deleted\": true,\n    \"id\": \"66b0c1d2e3f4a5b6c7d8e9f5\"\n  }\n}"
+            },
+            {
+              "name": "400 Deleting a default list",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Default collections can't be renamed or deleted\"\n}"
+            },
+            {
+              "name": "404 Not the owner / missing",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Collection not found\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Add movie to collection",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/{{collectionId}}/movies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                "{{collectionId}}",
+                "movies"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tmdbId\": 27205\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**What:** Owner-only. Add a movie by TMDB id (idempotent: re-adding is a no-op). Hydrates the movie cache + filter facets from TMDB.\n\n**Auth:** Bearer token required.\n\n**Path params:** `id` (collection ObjectId).\n\n**Body (JSON):**\n\n| Field | Type | Required | Description | Example |\n|---|---|---|---|---|\n| tmdbId | integer | yes | Numeric TMDB movie id (> 0). | `27205` |\n\n**Returns:** `data = full` (the updated collection + movies)."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}/movies",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}",
+                    "movies"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"tmdbId\": 27205\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"id\": \"66b0c1d2e3f4a5b6c7d8e9f0\",\n    \"name\": \"Favorites\",\n    \"isDefault\": true,\n    \"isPublic\": false,\n    \"posterUrl\": null,\n    \"sort\": \"added_desc\",\n    \"author\": \"moviefan\",\n    \"authorId\": \"66a1f2c4e5b3a1234567890a\",\n    \"isOwner\": true,\n    \"movieCount\": 2,\n    \"likesCount\": 0,\n    \"savesCount\": 0,\n    \"createdAt\": \"2026-06-25T10:30:00.000Z\",\n    \"movies\": [\n      {\n        \"id\": 550,\n        \"title\": \"Fight Club\",\n        \"poster_path\": \"/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg\",\n        \"vote_average\": 8.438,\n        \"release_date\": \"1999-10-15\",\n        \"releaseYear\": 1999,\n        \"genre_ids\": [\n          18\n        ],\n        \"provider_ids\": [\n          8\n        ],\n        \"addedAt\": \"2026-06-25T10:31:00.000Z\",\n        \"sortOrder\": 0\n      },\n      {\n        \"id\": 27205,\n        \"title\": \"Inception\",\n        \"poster_path\": \"/oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg\",\n        \"vote_average\": 8.369,\n        \"release_date\": \"2010-07-15\",\n        \"releaseYear\": 2010,\n        \"genre_ids\": [\n          28,\n          878,\n          12\n        ],\n        \"provider_ids\": [\n          9,\n          1899\n        ],\n        \"addedAt\": \"2026-06-25T10:32:00.000Z\",\n        \"sortOrder\": 0\n      }\n    ]\n  }\n}"
+            },
+            {
+              "name": "400 Invalid movie id",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}/movies",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}",
+                    "movies"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"tmdbId\": \"abc\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"A valid movie id is required\"\n}"
+            },
+            {
+              "name": "404 Not the owner / missing",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}/movies",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}",
+                    "movies"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"tmdbId\": 27205\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Collection not found\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Remove movie from collection",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/{{collectionId}}/movies/{{tmdbId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                "{{collectionId}}",
+                "movies",
+                "{{tmdbId}}"
+              ]
+            },
+            "description": "**What:** Owner-only. Remove a movie from the collection by TMDB id (no-op if not present).\n\n**Auth:** Bearer token required.\n\n**Path params:**\n\n| Param | Type | Required | Description | Example |\n|---|---|---|---|---|\n| id | string | yes | Collection ObjectId. | `66b0c1d2e3f4a5b6c7d8e9f0` |\n| tmdbId | integer | yes | TMDB movie id to remove. | `27205` |\n\n**Returns:** `data = full`."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}/movies/{{tmdbId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}",
+                    "movies",
+                    "{{tmdbId}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"id\": \"66b0c1d2e3f4a5b6c7d8e9f0\",\n    \"name\": \"Favorites\",\n    \"isDefault\": true,\n    \"isPublic\": false,\n    \"posterUrl\": null,\n    \"sort\": \"added_desc\",\n    \"author\": \"moviefan\",\n    \"authorId\": \"66a1f2c4e5b3a1234567890a\",\n    \"isOwner\": true,\n    \"movieCount\": 1,\n    \"likesCount\": 0,\n    \"savesCount\": 0,\n    \"createdAt\": \"2026-06-25T10:30:00.000Z\",\n    \"movies\": [\n      {\n        \"id\": 550,\n        \"title\": \"Fight Club\",\n        \"poster_path\": \"/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg\",\n        \"vote_average\": 8.438,\n        \"release_date\": \"1999-10-15\",\n        \"releaseYear\": 1999,\n        \"genre_ids\": [\n          18\n        ],\n        \"provider_ids\": [\n          8\n        ],\n        \"addedAt\": \"2026-06-25T10:31:00.000Z\",\n        \"sortOrder\": 0\n      }\n    ]\n  }\n}"
+            },
+            {
+              "name": "404 Not the owner / missing",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}/movies/{{tmdbId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}",
+                    "movies",
+                    "{{tmdbId}}"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Collection not found\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Wheel",
+          "description": "Spin-the-Wheel persistence + facet ids per collection. GET follows the same visibility as the collection; PUT is owner-only.",
+          "item": [
+            {
+              "name": "Get saved wheel",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}/wheel",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}",
+                    "wheel"
+                  ]
+                },
+                "description": "**What:** The saved wheel config (array of strings) for a viewable collection.\n\n**Auth:** Bearer token required.\n\n**Path params:** `id` (collection ObjectId).\n\n**Returns:** `data = { wheelConfig: [string] }`."
+              },
+              "response": [
+                {
+                  "name": "200 OK",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [],
+                    "url": {
+                      "raw": "{{baseUrl}}/api/collections/{{collectionId}}/wheel",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "api",
+                        "collections",
+                        "{{collectionId}}",
+                        "wheel"
+                      ]
+                    }
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"wheelConfig\": [\n      \"Fight Club\",\n      \"Inception\",\n      \"The Matrix\"\n    ]\n  }\n}"
+                },
+                {
+                  "name": "404 Not found / private",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [],
+                    "url": {
+                      "raw": "{{baseUrl}}/api/collections/{{collectionId}}/wheel",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "api",
+                        "collections",
+                        "{{collectionId}}",
+                        "wheel"
+                      ]
+                    }
+                  },
+                  "status": "Not Found",
+                  "code": 404,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"ok\": false,\n  \"error\": \"Collection not found\"\n}"
+                }
+              ]
+            },
+            {
+              "name": "Save wheel",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}/wheel",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}",
+                    "wheel"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"wheelConfig\": [\n    \"Fight Club\",\n    \"Inception\",\n    \"The Matrix\"\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "**What:** Owner-only. Replace the saved wheel config. Entries are trimmed, empties dropped, capped at 100.\n\n**Auth:** Bearer token required.\n\n**Body (JSON):**\n\n| Field | Type | Required | Description | Example |\n|---|---|---|---|---|\n| wheelConfig | array | yes | Array of strings (also accepts numbers/TMDB objects, coerced to title/name/id). Alias: `savedWheel`, or a bare array body. | `[\"Fight Club\",\"Inception\"]` |\n\n**Returns:** `data = { saved: true, wheelConfig }`."
+              },
+              "response": [
+                {
+                  "name": "200 OK",
+                  "originalRequest": {
+                    "method": "PUT",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/api/collections/{{collectionId}}/wheel",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "api",
+                        "collections",
+                        "{{collectionId}}",
+                        "wheel"
+                      ]
+                    },
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"wheelConfig\": [\n    \"Fight Club\",\n    \"Inception\",\n    \"The Matrix\"\n  ]\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"saved\": true,\n    \"wheelConfig\": [\n      \"Fight Club\",\n      \"Inception\",\n      \"The Matrix\"\n    ]\n  }\n}"
+                },
+                {
+                  "name": "400 Missing wheelConfig",
+                  "originalRequest": {
+                    "method": "PUT",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/api/collections/{{collectionId}}/wheel",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "api",
+                        "collections",
+                        "{{collectionId}}",
+                        "wheel"
+                      ]
+                    },
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"ok\": false,\n  \"error\": \"wheelConfig is required\"\n}"
+                },
+                {
+                  "name": "400 Not an array",
+                  "originalRequest": {
+                    "method": "PUT",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/api/collections/{{collectionId}}/wheel",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "api",
+                        "collections",
+                        "{{collectionId}}",
+                        "wheel"
+                      ]
+                    },
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"wheelConfig\": \"Fight Club\"\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"ok\": false,\n  \"error\": \"wheelConfig must be an array\"\n}"
+                },
+                {
+                  "name": "404 Not the owner / missing",
+                  "originalRequest": {
+                    "method": "PUT",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/api/collections/{{collectionId}}/wheel",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "api",
+                        "collections",
+                        "{{collectionId}}",
+                        "wheel"
+                      ]
+                    },
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"wheelConfig\": [\n    \"Fight Club\",\n    \"Inception\",\n    \"The Matrix\"\n  ]\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Not Found",
+                  "code": 404,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"ok\": false,\n  \"error\": \"Collection not found\"\n}"
+                }
+              ]
+            },
+            {
+              "name": "Wheel filters (available facets)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/collections/{{collectionId}}/wheel/filters",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "collections",
+                    "{{collectionId}}",
+                    "wheel",
+                    "filters"
+                  ]
+                },
+                "description": "**What:** Distinct genre + provider facet ids actually present across this collection's movies (so the wheel UI offers only non-empty filters). Pure DB read, no TMDB.\n\n**Auth:** Bearer token required.\n\n**Path params:** `id` (collection ObjectId).\n\n**Returns:** `data = { availableGenres: [int], availableProviders: [int] }`. providers are US flatrate ids only, so it can be empty."
+              },
+              "response": [
+                {
+                  "name": "200 OK",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [],
+                    "url": {
+                      "raw": "{{baseUrl}}/api/collections/{{collectionId}}/wheel/filters",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "api",
+                        "collections",
+                        "{{collectionId}}",
+                        "wheel",
+                        "filters"
+                      ]
+                    }
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"availableGenres\": [\n      18,\n      28,\n      878,\n      12\n    ],\n    \"availableProviders\": [\n      8,\n      9,\n      1899\n    ]\n  }\n}"
+                },
+                {
+                  "name": "404 Not found / private",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [],
+                    "url": {
+                      "raw": "{{baseUrl}}/api/collections/{{collectionId}}/wheel/filters",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "api",
+                        "collections",
+                        "{{collectionId}}",
+                        "wheel",
+                        "filters"
+                      ]
+                    }
+                  },
+                  "status": "Not Found",
+                  "code": 404,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"ok\": false,\n  \"error\": \"Collection not found\"\n}"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "AI",
+      "description": "Gemini-backed features. All require Bearer. The 3 generative actions each spend 1 of 5 daily actions per user; over-limit returns 429 with code AI_LIMIT_REACHED before any model call.",
+      "item": [
+        {
+          "name": "Picker (Let AI Choose)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ai/picker",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "ai",
+                "picker"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"collectionId\": \"{{collectionId}}\",\n  \"prompt\": \"a tense thriller for tonight\",\n  \"count\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**What:** Pick movies FROM the caller's own collection that best match a prompt, each with a one-line reason. Owner-only.\n\n**Auth:** Bearer token required. Spends 1 daily AI action on success.\n\n**Body (JSON):**\n\n| Field | Type | Required | Description | Example |\n|---|---|---|---|---|\n| collectionId | string | yes | The caller's collection ObjectId. | `66b0c1d2e3f4a5b6c7d8e9f0` |\n| prompt | string | yes | Natural-language ask. | `a tense thriller for tonight` |\n| count | integer | no | How many to return. Clamped to 1-3 and to the collection size; invalid = 1. | `2` |\n| exclude_ids | array | no | TMDB ids currently on screen (Smart Reroll soft filter). | `[550]` |\n\n**Returns:** `data = [{ id, title, poster_path, vote_average, release_date, releaseYear, reason }]` + sibling `aiUsage`."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/picker",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "picker"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"collectionId\": \"{{collectionId}}\",\n  \"prompt\": \"a tense thriller for tonight\",\n  \"count\": 2\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"id\": 27205,\n      \"title\": \"Inception\",\n      \"poster_path\": \"/oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg\",\n      \"vote_average\": 8.369,\n      \"release_date\": \"2010-07-15\",\n      \"releaseYear\": 2010,\n      \"reason\": \"A layered heist thriller that keeps the tension high from start to finish.\"\n    },\n    {\n      \"id\": 550,\n      \"title\": \"Fight Club\",\n      \"poster_path\": \"/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg\",\n      \"vote_average\": 8.438,\n      \"release_date\": \"1999-10-15\",\n      \"releaseYear\": 1999,\n      \"reason\": \"Dark, twist-driven, and gripping right up to the final scene.\"\n    }\n  ],\n  \"aiUsage\": {\n    \"used\": 1,\n    \"remaining\": 4,\n    \"limit\": 5\n  }\n}"
+            },
+            {
+              "name": "400 Missing collectionId",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/picker",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "picker"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"prompt\": \"a tense thriller\",\n  \"count\": 2\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"collectionId is required\"\n}"
+            },
+            {
+              "name": "400 Missing prompt",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/picker",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "picker"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"collectionId\": \"{{collectionId}}\",\n  \"count\": 2\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"prompt is required\"\n}"
+            },
+            {
+              "name": "400 Empty collection",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/picker",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "picker"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"collectionId\": \"{{collectionId}}\",\n  \"prompt\": \"a tense thriller for tonight\",\n  \"count\": 2\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"This collection has no movies to choose from\"\n}"
+            },
+            {
+              "name": "404 Not the owner / missing",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/picker",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "picker"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"collectionId\": \"{{collectionId}}\",\n  \"prompt\": \"a tense thriller for tonight\",\n  \"count\": 2\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Collection not found\"\n}"
+            },
+            {
+              "name": "429 Daily AI limit",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/picker",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "picker"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"collectionId\": \"{{collectionId}}\",\n  \"prompt\": \"a tense thriller for tonight\",\n  \"count\": 2\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Too Many Requests",
+              "code": 429,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"You've used all your daily AI actions. They reset at midnight Pacific time.\",\n  \"code\": \"AI_LIMIT_REACHED\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Search (AI Search)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ai/search",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "ai",
+                "search"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"mind-bending sci-fi movies about dreams\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**What:** Turn a natural-language query into up to 50 real TMDB movies (Gemini proposes titles+years; each is resolved against TMDB).\n\n**Auth:** Bearer token required. Spends 1 daily AI action on success.\n\n**Body (JSON):**\n\n| Field | Type | Required | Description | Example |\n|---|---|---|---|---|\n| query | string | yes | Natural-language search. Blank = 400. | `mind-bending sci-fi about dreams` |\n| exclude_ids | array | no | TMDB ids on screen (Smart Reroll soft filter). | `[27205]` |\n\n**Returns:** `data = [tmdbMovie]` (raw TMDB objects, no reason) + sibling `aiUsage`."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/search",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "search"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"query\": \"mind-bending sci-fi movies about dreams\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"adult\": false,\n      \"backdrop_path\": \"/s3TBrRGB1iav7gFOCNx3H31MoES.jpg\",\n      \"genre_ids\": [\n        28,\n        878,\n        12\n      ],\n      \"id\": 27205,\n      \"original_language\": \"en\",\n      \"original_title\": \"Inception\",\n      \"overview\": \"Cobb, a skilled thief who commits corporate espionage by infiltrating the subconscious of his targets, is offered a chance to regain his old life.\",\n      \"popularity\": 95.13,\n      \"poster_path\": \"/oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg\",\n      \"release_date\": \"2010-07-15\",\n      \"title\": \"Inception\",\n      \"video\": false,\n      \"vote_average\": 8.369,\n      \"vote_count\": 36219\n    },\n    {\n      \"adult\": false,\n      \"backdrop_path\": \"/hZkgoQYus5vegHoetLkCJzb17zJ.jpg\",\n      \"genre_ids\": [\n        18\n      ],\n      \"id\": 550,\n      \"original_language\": \"en\",\n      \"original_title\": \"Fight Club\",\n      \"overview\": \"A ticking-time-bomb insomniac and a slippery soap salesman channel primal male aggression into a shocking new form of therapy.\",\n      \"popularity\": 65.482,\n      \"poster_path\": \"/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg\",\n      \"release_date\": \"1999-10-15\",\n      \"title\": \"Fight Club\",\n      \"video\": false,\n      \"vote_average\": 8.438,\n      \"vote_count\": 28543\n    }\n  ],\n  \"aiUsage\": {\n    \"used\": 1,\n    \"remaining\": 4,\n    \"limit\": 5\n  }\n}"
+            },
+            {
+              "name": "400 Missing query",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/search",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "search"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"query is required\"\n}"
+            },
+            {
+              "name": "429 Daily AI limit",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/search",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "search"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"query\": \"mind-bending sci-fi movies about dreams\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Too Many Requests",
+              "code": 429,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"You've used all your daily AI actions. They reset at midnight Pacific time.\",\n  \"code\": \"AI_LIMIT_REACHED\"\n}"
+            },
+            {
+              "name": "502 Upstream AI failure",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/search",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "search"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"query\": \"mind-bending sci-fi movies about dreams\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Gateway",
+              "code": 502,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"AI service request failed\"\n}"
+            },
+            {
+              "name": "504 AI timeout",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/search",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "search"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"query\": \"mind-bending sci-fi movies about dreams\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Gateway Timeout",
+              "code": 504,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"AI request timed out after 20000ms\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Enhance collection",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ai/enhance/{{collectionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "ai",
+                "enhance",
+                "{{collectionId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exclude_ids\": [],\n  \"exclude_titles\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**What:** Recommend up to 3 movies NOT already in the collection that fit its taste, each with a reason. Owner-only. Warms the movie cache with what it returns.\n\n**Auth:** Bearer token required. Spends 1 daily AI action on success.\n\n**Path params:** `id` (collection ObjectId).\n\n**Body (JSON, all optional):**\n\n| Field | Type | Required | Description | Example |\n|---|---|---|---|---|\n| exclude_ids | array | no | TMDB ids already shown this session (hard filter). | `[603]` |\n| exclude_titles | array | no | Titles already suggested this session (prompt avoidance, max 100). | `[\"The Matrix\"]` |\n\n**Returns:** `data = [{ id, title, poster_path, vote_average, release_date, reason }]` + sibling `aiUsage`."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/enhance/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "enhance",
+                    "{{collectionId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"exclude_ids\": [],\n  \"exclude_titles\": []\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": [\n    {\n      \"id\": 603,\n      \"title\": \"The Matrix\",\n      \"poster_path\": \"/p96dm7sCMn4VYAStA6siNz30G1r.jpg\",\n      \"vote_average\": 8.2,\n      \"release_date\": \"1999-03-30\",\n      \"reason\": \"Shares the cerebral, reality-bending tone of your collection.\"\n    },\n    {\n      \"id\": 157336,\n      \"title\": \"Interstellar\",\n      \"poster_path\": \"/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg\",\n      \"vote_average\": 8.4,\n      \"release_date\": \"2014-11-05\",\n      \"reason\": \"Big-idea science fiction with the same emotional weight.\"\n    }\n  ],\n  \"aiUsage\": {\n    \"used\": 1,\n    \"remaining\": 4,\n    \"limit\": 5\n  }\n}"
+            },
+            {
+              "name": "404 Not the owner / missing",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/enhance/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "enhance",
+                    "{{collectionId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"exclude_ids\": [],\n  \"exclude_titles\": []\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Collection not found\"\n}"
+            },
+            {
+              "name": "429 Daily AI limit",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/enhance/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "enhance",
+                    "{{collectionId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"exclude_ids\": [],\n  \"exclude_titles\": []\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Too Many Requests",
+              "code": 429,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"You've used all your daily AI actions. They reset at midnight Pacific time.\",\n  \"code\": \"AI_LIMIT_REACHED\"\n}"
+            },
+            {
+              "name": "500 AI not configured",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/enhance/{{collectionId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "enhance",
+                    "{{collectionId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"exclude_ids\": [],\n  \"exclude_titles\": []\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Internal Server Error",
+              "code": 500,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"AI service is not configured on the server\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "AI usage (quota status)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ai/usage",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "ai",
+                "usage"
+              ]
+            },
+            "description": "**What:** The caller's daily AI-action quota status. Pure read, does not count against the quota.\n\n**Auth:** Bearer token required.\n\n**Params:** None.\n\n**Returns:** `data = { used, remaining, limit }`."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/usage",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "usage"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"data\": {\n    \"used\": 1,\n    \"remaining\": 4,\n    \"limit\": 5\n  }\n}"
+            },
+            {
+              "name": "401 Unauthorized",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/usage",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "usage"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"error\": \"Missing or malformed Authorization header\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
