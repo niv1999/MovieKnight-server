@@ -5,43 +5,7 @@
 const { tmdb, clampPage, randInt } = require("../services/tmdb");
 const movieCache = require("../services/movieCache");
 
-const RANDOM_MAX_ID = 1_200_000; // rough upper bound of TMDB movie IDs
-const RANDOM_MAX_ATTEMPTS = 20; // fail-safe so the loop can't hang the server
-
-// Pick one truly random (often obscure), non-adult movie.
-// TMDB has no native random endpoint, so we brute-force it: pick a random ID,
-// fetch /movie/{id}, and retry on a 404 (dead ID) or an adult title. To avoid
-// hanging when we keep hitting dead/adult IDs, we cap attempts and fall back to
-// a random title from the popular feed (pages 1–500).
-// Returns { movie, fallback } — fallback is true when the loop maxed out.
-async function pickRandomMovie() {
-  for (let attempt = 0; attempt < RANDOM_MAX_ATTEMPTS; attempt++) {
-    const id = randInt(1, RANDOM_MAX_ID);
-
-    let movie;
-    try {
-      movie = await tmdb(`/movie/${id}`);
-    } catch (err) {
-      if (err.status === 404) continue; // dead ID — try another
-      throw err; // real failure (auth, rate-limit, network) — surface it
-    }
-
-    if (movie.adult === false) {
-      return { movie, fallback: false };
-    }
-    // adult title — discard and keep looking
-  }
-
-  // Fail-safe: the loop maxed out, so return a reliable popular title instead.
-  const popular = await tmdb("/movie/popular", { page: randInt(1, 500) });
-  const results = popular.results || [];
-  if (results.length === 0) {
-    const err = new Error("No fallback movie available");
-    err.status = 502;
-    throw err;
-  }
-  return { movie: results[randInt(0, results.length - 1)], fallback: true };
-}
+const SURPRISE_DEFAULT_PAGES = 50; // ?pages default — pool ≈ the top 1,000 popular titles
 
 // Allowable `sortBy` values for /api/movies/search and their TMDB /discover `sort_by`
 // mapping. These are SEMANTIC names the client requests by intent; the client never
@@ -97,17 +61,16 @@ const searchByText = async (q, page) => {
 //     (vote_count.desc); `trending` = what's hot this week (popularity.desc). Both go
 //     through /discover so every filter applies natively.
 // Params: q, genre, yearFrom, yearTo, minRating, minVotes, language, with_cast,
-// with_crew, providers, certification, sortBy (alias: sort; default popularity), page.
+// with_crew, providers, certification, sortBy (default popularity), page.
 //
 // `page` maps 1:1 to the underlying TMDB page (TMDB serves up to page 500), so
 // result sets don't shrink as you scroll — we return an empty array only when TMDB
 // itself runs out of pages.
 async function search(req, res) {
   const q = String(req.query.q || "").trim();
-  // `sortBy` is the semantic sort name; accept legacy `sort` as an alias. The client
-  // only ever sends an intent name (popularity/trending/...), never a TMDB sort_by.
-  const requestedSort = req.query.sortBy || req.query.sort;
-  const sort = isValidSort(requestedSort) ? requestedSort : DEFAULT_SORT;
+  // `sortBy` is the semantic sort intent (popularity/trending/...), never a TMDB
+  // sort_by string — the server owns the mapping (see SORT_BY).
+  const sort = isValidSort(req.query.sortBy) ? req.query.sortBy : DEFAULT_SORT;
   const page = clampPage(req.query.page);
 
   // genre may be a single id or a comma/pipe-joined multi-id (e.g. "28,12").
@@ -126,12 +89,12 @@ async function search(req, res) {
   const language = req.query.language ? String(req.query.language).trim() : null;
   const withCast = req.query.with_cast ? String(req.query.with_cast) : null;
   const withCrew = req.query.with_crew ? String(req.query.with_crew) : null;
-  // Streaming-provider filter. Accept `providers` or `with_watch_providers`, single
-  // or comma/pipe-joined ids (e.g. "8,9"). OR semantics ("on Netflix OR Disney+"),
-  // which TMDB expresses with "|". with_watch_providers is IGNORED by TMDB unless a
-  // watch_region accompanies it — omitting the region is why provider filtering
-  // silently returned everything/"unavailable". Default the region to US.
-  const providerIds = String(req.query.providers || req.query.with_watch_providers || "")
+  // Streaming-provider filter (`providers`): single or comma/pipe-joined ids (e.g.
+  // "8,9"). OR semantics ("on Netflix OR Disney+"), which TMDB expresses with "|".
+  // The outbound TMDB param with_watch_providers is IGNORED unless a watch_region
+  // accompanies it — omitting the region is why provider filtering silently returned
+  // everything/"unavailable". Default the region to US.
+  const providerIds = String(req.query.providers || "")
     .split(/[,|]/)
     .map((s) => parseInt(s.trim(), 10))
     .filter(Number.isFinite);
@@ -218,9 +181,39 @@ async function search(req, res) {
   res.json({ ok: true, data });
 }
 
-// GET /api/movies/random — one random movie, contract envelope.
+// Pick one random — but recognizable — movie. TMDB has no native random endpoint, so
+// rather than brute-forcing random IDs (which mostly surfaced obscure/foreign/
+// posterless titles), we draw from the popular, well-voted, English discover feed —
+// the SAME pool as the default home feed — and return a random title from a random
+// page within the first `pages` pages. A bigger `pages` widens the pool toward more
+// obscure picks; a smaller one keeps it mainstream.
+async function pickRandomMovie(pages) {
+  const pickFromPage = async (page) => {
+    const data = await tmdb("/discover/movie", {
+      include_adult: "false",
+      sort_by: SORT_BY.popularity, // vote_count.desc — all-time most-voted
+      "vote_count.gte": 500, // quality floor — mirrors the home default feed
+      with_original_language: "en",
+      page,
+    });
+    const results = data.results || [];
+    return results.length ? results[randInt(0, results.length - 1)] : null;
+  };
+
+  // A high random page can fall past a thin result set — retry once from page 1 so
+  // the button still returns something.
+  const page = randInt(1, pages);
+  return (await pickFromPage(page)) || (page !== 1 ? pickFromPage(1) : null);
+}
+
+// GET /api/movies/random — one random (but recognizable) movie, contract envelope.
+// `?pages=N` caps how many pages of the popular feed to randomize from (default 50,
+// clamped to TMDB's 1–500). The client will later derive N from a user setting
+// (movies-to-randomize-from ÷ 20); for now it sends no param and gets the default.
 async function random(req, res) {
-  const { movie } = await pickRandomMovie();
+  const pages =
+    req.query.pages != null ? clampPage(req.query.pages) : SURPRISE_DEFAULT_PAGES;
+  const movie = await pickRandomMovie(pages);
   res.json({ ok: true, data: movie });
 }
 

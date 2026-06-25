@@ -32,38 +32,34 @@ changes via Node's built-in `--watch`.)
 
 ## Endpoints
 
-CORS is open to all origins (GET + `Accept` header), so it works from a static
-server or `file://`.
+All routes live under `/api` and return the envelope `{ ok: true, data }` (success) or
+`{ ok: false, error, code? }` (failure) with a proper HTTP status. CORS is open to all
+origins, so the static client works from any host or `file://`. The only non-`/api`
+route is `GET /` — a health check returning `{ ok: true, service: "movieknight-server" }`.
 
-| Method & path                | TMDB source                | Returns                          |
-| ---------------------------- | -------------------------- | -------------------------------- |
-| `GET /movies`                | `/movie/popular` — or `/discover/movie` when filters are present | `{ movies: [...] }` |
-| `GET /movies/search?query=`  | `/search/movie`            | `{ movies: [...] }` (empty `query` → `[]`) |
-| `GET /genres`                | `/genre/movie/list`        | `{ genres: [{ id, name }] }`     |
-| `GET /providers`             | `/watch/providers/movie` (US) | `{ providers: [{ provider_id, provider_name, logo_path, display_priority }] }` |
+| Method & path | Notes |
+| --- | --- |
+| `GET /api/movies/search` | Movie feed / search. Empty `q` → popular discover feed; `q` present → text-relevance results. (Complex query #1: filters + sort.) |
+| `GET /api/movies/random` | One random but recognizable movie from the popular feed. `?pages=N` optional (default 50). |
+| `GET /api/movies/:tmdbId` | Full movie detail. |
+| `GET /api/people/search` · `/people/popular` | TMDB people search (`?q=`) + popular-people pre-fill. |
+| `GET /api/genres` · `/api/providers` | TMDB genre and US watch-provider lists. |
+| `POST /api/auth/signup` · `/login` · `GET /api/auth/me` | Auth (bcrypt + JWT). |
+| `PATCH /api/users/me` | Update own profile (bio / avatar / name / country). |
+| `… /api/collections …` | Collection CRUD, add/remove movie, and the saved wheel (`GET/PUT /api/collections/:id/wheel`). |
+| `POST /api/ai/picker` · `/search` · `/enhance/:id` | Gemini-backed helpers (daily-quota limited). |
 
-### Filtering `/movies`
-
-When any of these TMDB-native query params are present, `/movies` switches to
-`/discover/movie` and forwards them as-is (otherwise it returns the popular feed):
-
-| Param                       | Example        | Notes                                  |
-| --------------------------- | -------------- | -------------------------------------- |
-| `with_genres`               | `28,12`        | comma-separated genre IDs              |
-| `with_watch_providers`      | `8|9`          | pipe-separated provider IDs; `watch_region` defaults to `US` if omitted |
-| `watch_region`              | `US`           | sent alongside `with_watch_providers`  |
-| `primary_release_date.gte`  | `2010-01-01`   |                                        |
-| `primary_release_date.lte`  | `2010-12-31`   |                                        |
-| `vote_average.gte`          | `7`            | adds `vote_count.gte=50` by default so low-vote titles don't surface |
-| `sort_by`                   | `popularity.desc` | optional; frontend doesn't send it yet |
-| `page`                      | `2`            | 20 results/page; clamped to an integer 1–500, defaults to 1. Works for the popular feed too. |
+`/api/movies/search` takes **semantic** params the server maps to TMDB (not raw TMDB
+param names): `q`, `genre`, `yearFrom`/`yearTo`, `minRating`, `minVotes`, `language`,
+`with_cast`/`with_crew`, `providers` (+ `watch_region`), `certification`
+(+ `certification_country`), `sortBy`, `page`.
 
 Movie objects keep TMDB's raw field names (`title`, `vote_average`, `popularity`,
-`release_date`, `poster_path`). `poster_path` / `logo_path` are left as TMDB's
-bare `/abc.jpg` paths — the frontend prefixes `https://image.tmdb.org/t/p/w500`.
+`release_date`, `poster_path`); `poster_path` / `logo_path` stay as bare `/abc.jpg`
+paths — the frontend prefixes `https://image.tmdb.org/t/p/w500`.
 
-Non-2xx responses from TMDB are passed through with their status code and an
-`{ "error": "..." }` body.
+**Full, authoritative contract (every route, body, response, status code):
+[`docs/API_CONTRACT.md`](docs/API_CONTRACT.md).**
 
 ## Deploying to Render (later)
 

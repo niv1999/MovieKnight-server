@@ -22,10 +22,10 @@ const isMostlyEnglish = (p) => {
 };
 
 // GET /api/people/search?q=<text> — search TMDB people (actors/directors) for the
-// filters. Accepts `q` (or legacy `query`). `known_for_department` ("Acting" /
-// "Directing") helps the UI tell them apart. Empty query -> data: [].
+// filters. `known_for_department` ("Acting" / "Directing") helps the UI tell them
+// apart. Empty query -> data: [].
 async function search(req, res) {
-  const query = String(req.query.q || req.query.query || "").trim();
+  const query = String(req.query.q || "").trim();
   if (!query) {
     return res.json({ ok: true, data: [] });
   }

@@ -472,10 +472,8 @@ async function respondFull(collection, req, res) {
 
 const MAX_WHEEL_ITEMS = 100; // a wheel that large is already unusable; this caps abuse
 
-// Normalise an incoming wheel array to [String] (the stored shape). Accepts the
-// client's string entries as-is, and also tolerates numbers (TMDB ids) or objects
-// (TMDB movie objects → prefer title/name/id) so the endpoint matches an
-// "array of TMDB movie objects/IDs" payload without changing the storage model.
+// Normalise an incoming wheel array to [String] (the stored shape): trim entries,
+// drop empties, cap the count. The client sends an array of string titles.
 function cleanWheel(raw) {
   if (!Array.isArray(raw)) {
     const err = new Error("wheelConfig must be an array");
@@ -483,13 +481,7 @@ function cleanWheel(raw) {
     throw err;
   }
   return raw
-    .map((entry) => {
-      if (entry == null) return "";
-      if (typeof entry === "object") {
-        return String(entry.title ?? entry.name ?? entry.id ?? "").trim();
-      }
-      return String(entry).trim();
-    })
+    .map((entry) => (entry == null ? "" : String(entry).trim()))
     .filter(Boolean)
     .slice(0, MAX_WHEEL_ITEMS);
 }
@@ -513,17 +505,7 @@ async function saveWheel(req, res) {
   const collection = await findOr404(req.params.id);
   assertOwner(collection, req);
 
-  const body = req.body || {};
-  // Accept { wheelConfig }, { savedWheel }, or a bare array body.
-  const incoming =
-    body.wheelConfig !== undefined
-      ? body.wheelConfig
-      : body.savedWheel !== undefined
-      ? body.savedWheel
-      : Array.isArray(body)
-      ? body
-      : undefined;
-
+  const incoming = (req.body || {}).wheelConfig;
   if (incoming === undefined) {
     const err = new Error("wheelConfig is required");
     err.status = 400;
