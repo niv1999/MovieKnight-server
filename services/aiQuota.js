@@ -11,7 +11,13 @@
 
 const User = require("../models/User");
 
-const DAILY_AI_LIMIT = 5;
+// Per-user actions allowed per calendar day. Defaults to 5; override with the
+// AI_DAILY_LIMIT env var (e.g. raise it for graders so they don't have to make
+// several accounts to exercise the AI features). A non-positive/NaN value falls
+// back to the default.
+const DAILY_AI_LIMIT = Number(process.env.AI_DAILY_LIMIT) > 0
+  ? Number(process.env.AI_DAILY_LIMIT)
+  : 5;
 
 // Error `code` for "out of daily AI actions". Both the quota limit and an upstream
 // Gemini rate-limit surface as HTTP 429, so the client can't tell them apart by
