@@ -2,7 +2,7 @@
 // Thin entry point: middleware + route mounting + DB connection. Every TMDB call
 // lives behind a controller (services/tmdb.js holds the key), so the frontend
 // never sees the API key. Routes are split into routes/ + controllers/ (the
-// taught layout); see docs/API_CONTRACT.md for the full contract.
+// taught layout).
 
 require("dotenv").config();
 const express = require("express");

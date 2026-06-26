@@ -1,4 +1,4 @@
-// models/Collection.js — `collections` collection (see docs/DATA_MODEL.md).
+// models/Collection.js — `collections` collection.
 // Items and the saved wheel are embedded (Mongo-idiomatic; no join tables).
 const mongoose = require("mongoose");
 
@@ -40,7 +40,7 @@ const collectionSchema = new mongoose.Schema(
     // Owner. Indexed: every "list a user's collections" query filters on this
     // (Collection.find({ userId })), so the index turns a collection scan into a
     // direct lookup — this is what makes the one-to-many efficient, not a
-    // collections[] array on the user (see note below / docs/DATA_MODEL.md).
+    // collections[] array on the user (see note below).
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

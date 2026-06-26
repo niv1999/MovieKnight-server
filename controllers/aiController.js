@@ -1,5 +1,5 @@
-// controllers/aiController.js — the three Gemini-backed AI features (see
-// docs/SPRINT_PLAN.md §extras): "Let AI Choose", "AI Search", "Enhance Collection".
+// controllers/aiController.js — the three Gemini-backed AI features:
+// "Let AI Choose", "AI Search", "Enhance Collection".
 // Every response uses the contract envelope { ok:true, data } / { ok:false, error };
 // handlers are plain async (req, res) wrapped by utils/route() in the routes layer.
 //

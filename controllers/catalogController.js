@@ -6,8 +6,8 @@
 // memoized in process RAM for 30 days instead of re-hitting TMDB on every
 // filter-dropdown load (see `cached` below). We deliberately DON'T use Mongo: the
 // data is two small static arrays, the miss penalty is a single cheap TMDB call,
-// and an in-memory memo keeps working even when MONGODB_URI is unset (per
-// CLAUDE.md, the proxy must boot with an empty .env).
+// and an in-memory memo keeps working even when MONGODB_URI is unset (the proxy
+// must boot with an empty .env).
 const { tmdb } = require("../services/tmdb");
 
 // --- in-memory catalog cache ---------------------------------------------------

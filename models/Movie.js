@@ -1,4 +1,4 @@
-// models/Movie.js — `movies` collection: the TMDB cache (see docs/DATA_MODEL.md).
+// models/Movie.js — `movies` collection: the TMDB cache.
 // "Fetch once, store forever" — _id IS the numeric TMDB movie id, not an ObjectId.
 const mongoose = require("mongoose");
 

@@ -1,5 +1,5 @@
 // services/movieCache.js — the movie caching layer that sits between the TMDB
-// proxy controllers and Mongo. Two tiers (see docs/DATA_MODEL.md):
+// proxy controllers and Mongo. Two tiers:
 //
 //   1. `movies`    — canonical movie content, kept ~forever. Volatile numbers
 //                    (rating/popularity) are refreshed opportunistically on every
@@ -14,7 +14,7 @@
 //     image paths, letting the client prefix the CDN base as it already does.
 //   • The cache is BEST-EFFORT: any Mongo failure (or no DB at all) silently
 //     falls back to a direct TMDB fetch, so the proxy still works with an empty
-//     .env (per CLAUDE.md). DB errors are logged, never thrown to the client.
+//     .env. DB errors are logged, never thrown to the client.
 //   • Writes only $set the fields they actually have, so a feed-level refresh can
 //     never clobber detail-only fields or reset `fullDetails`.
 

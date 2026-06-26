@@ -1,7 +1,7 @@
 // controllers/authController.js — S4 auth (signup / login / me).
 // Passwords are hashed with bcryptjs; sessions are stateless 7-day JWTs the client
 // stores in localStorage. Every response uses the contract envelope
-// { ok:true, data } / { ok:false, error } (see docs/API_CONTRACT.md).
+// { ok:true, data } / { ok:false, error }.
 // passwordHash is NEVER returned to the client.
 
 const bcrypt = require("bcryptjs");

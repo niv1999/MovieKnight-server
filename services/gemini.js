@@ -23,9 +23,9 @@ const MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
 // to the client rather than letting a slow upstream hang the request.
 const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 20_000;
 
-// Lazily constructed so the server still boots with an empty .env (per CLAUDE.md:
-// the TMDB proxy must run without optional integrations configured). The key is
-// only required the first time an AI endpoint is actually hit.
+// Lazily constructed so the server still boots with an empty .env: the TMDB proxy
+// must run without optional integrations configured. The key is only required the
+// first time an AI endpoint is actually hit.
 let client = null;
 function getClient() {
   const apiKey = process.env.GEMINI_API_KEY;

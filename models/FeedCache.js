@@ -1,4 +1,4 @@
-// models/FeedCache.js — the feed/search cache (see docs/DATA_MODEL.md).
+// models/FeedCache.js — the feed/search cache.
 // One document per distinct query+page: `_id` is a canonical fingerprint of the
 // request (filters + sort + page), `movieIds` is the ORDERED list of TMDB ids
 // that query returned. The movie content itself lives in `movies` (kept ~forever);

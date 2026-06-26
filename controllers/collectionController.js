@@ -1,9 +1,9 @@
 // controllers/collectionController.js — Collections CRUD (S5).
-// Implements the Collections lane of docs/API_CONTRACT.md. Every response uses the
+// Implements the Collections CRUD lane. Every response uses the
 // contract envelope { ok:true, data } / { ok:false, error }; handlers are plain
 // async (req, res) wrapped by utils/route() in the routes layer.
 //
-// Ownership model (docs/DATA_MODEL.md): a collection's owner is collections.userId,
+// Ownership model: a collection's owner is collections.userId,
 // taken from the JWT — routes never nest under /users/:id. Reads of a PUBLIC
 // collection are allowed for anyone (guest or other user → "visitor mode");
 // a PRIVATE collection is visible only to its owner (others get 404, never 403, so

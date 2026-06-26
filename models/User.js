@@ -1,4 +1,4 @@
-// models/User.js — `users` collection (see docs/DATA_MODEL.md).
+// models/User.js — `users` collection.
 const mongoose = require("mongoose");
 
 // A progression badge (cosmetic, mock for now — dynamic earning is deferred).
