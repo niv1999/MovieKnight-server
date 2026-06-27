@@ -22,6 +22,7 @@ const userSchema = new mongoose.Schema(
     badges: { type: [badgeSchema], default: [] },
     // `day` is the Pacific calendar day "YYYY-MM-DD" the count belongs to; an
     // earlier day reads as 0 (lazy midnight-Pacific reset, no cron/TTL).
+    // Using Pacific calendar day because Gemini API Key reset its usage based on that timezone
     aiUsage: {
       count: { type: Number, default: 0 },
       day: { type: String, default: "" },
