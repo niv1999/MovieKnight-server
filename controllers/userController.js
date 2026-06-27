@@ -1,14 +1,8 @@
-// controllers/userController.js — current-user profile updates.
-// PATCH /api/users/me lets the signed-in user edit their own editable fields
-// (bio for now; name/avatarUrl/countryCode too). Never touches email/username/
-// passwordHash — those need dedicated flows. Returns the updated safe user.
-
 const User = require("../models/User");
 const { publicUser } = require("./authController");
 
 const BIO_MAX = 200;
 
-// PATCH /api/users/me — requireAuth has already set req.user.
 async function updateMe(req, res, next) {
   try {
     const body = req.body || {};
@@ -29,7 +23,7 @@ async function updateMe(req, res, next) {
     if (body.name !== undefined) updates.name = String(body.name).trim();
     if (body.avatarUrl !== undefined) {
       const avatar = String(body.avatarUrl).trim();
-      // Accept an empty string (clears it), an image data URL, or an http(s) URL.
+      // empty clears it; otherwise data-image url or http(s)
       if (
         avatar &&
         !/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(avatar) &&

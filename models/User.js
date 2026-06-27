@@ -1,13 +1,10 @@
-// models/User.js — `users` collection.
 const mongoose = require("mongoose");
 
-// A progression badge (cosmetic, mock for now — dynamic earning is deferred).
-// `tier` drives the shield's metal colour on the profile (gold/silver/bronze).
 const badgeSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true }, // e.g. "Movie Enthusiast"
+    name: { type: String, required: true },
     tier: { type: String, enum: ["gold", "silver", "bronze"], required: true },
-    subtitle: { type: String, default: "" }, // tooltip line, e.g. "Silver Tier · 63 to Gold"
+    subtitle: { type: String, default: "" },
   },
   { _id: false }
 );
@@ -16,18 +13,15 @@ const userSchema = new mongoose.Schema(
   {
     username: { type: String, required: true, unique: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-    passwordHash: { type: String, required: true }, // bcryptjs hash — never store plaintext
+    passwordHash: { type: String, required: true }, // never store plaintext
     name: { type: String },
-    bio: { type: String, default: "" }, // short profile bio; starts empty
+    bio: { type: String, default: "" },
     dateOfBirth: { type: Date },
-    avatarUrl: { type: String }, // optional
-    countryCode: { type: String }, // ISO-3166 alpha-2, optional
-    // Earned progression badges. Empty for normal users (profile shows the empty
-    // dashed shields); the Yuviverse7 demo user is seeded with three.
+    avatarUrl: { type: String },
+    countryCode: { type: String }, // ISO-3166 alpha-2
     badges: { type: [badgeSchema], default: [] },
-    // Daily AI quota (see services/aiQuota.js). `day` is the Pacific calendar day
-    // ("YYYY-MM-DD") the `count` belongs to; a count stamped with an earlier day is
-    // treated as 0 (the lazy midnight-Pacific reset — no cron/TTL involved).
+    // `day` is the Pacific calendar day "YYYY-MM-DD" the count belongs to; an
+    // earlier day reads as 0 (lazy midnight-Pacific reset, no cron/TTL).
     aiUsage: {
       count: { type: Number, default: 0 },
       day: { type: String, default: "" },

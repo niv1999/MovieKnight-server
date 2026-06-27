@@ -1,7 +1,7 @@
 {
   "name": "movieknight-server",
   "version": "1.0.0",
-  "description": "MovieKnight backend — Express proxy for the TMDB v3 API",
+  "description": "MovieKnight backend: Express + MongoDB API for movie browsing (TMDB), collections, JWT auth, and AI picks (Gemini)",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -13,8 +13,10 @@
   "keywords": [
     "movieknight",
     "express",
+    "mongodb",
     "tmdb",
-    "proxy"
+    "gemini",
+    "jwt"
   ],
   "license": "MIT",
   "dependencies": {

@@ -1,5 +1,3 @@
-// routes/peopleRoutes.js — people lookups for the Actor/Director filter.
-// Mounted at /api in index.js, so paths here are relative (final: /api/people/*).
 const express = require("express");
 const route = require("../utils/route");
 const people = require("../controllers/peopleController");

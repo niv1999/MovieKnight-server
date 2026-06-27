@@ -1,8 +1,4 @@
-// routes/aiRoutes.js — Gemini-backed AI features. Mounted at /api/ai in index.js,
-// so paths here are relative to that prefix (final paths are /api/ai/*).
-// All three are login-gated (requireAuth): the picker + enhance act on a user's own
-// collection (owner enforced in the controller), and AI Search is a logged-in-only
-// feature that spends our shared Gemini quota.
+// /api/ai. login-gated: acts on the user's own data or spends shared quota.
 const express = require("express");
 const route = require("../utils/route");
 const requireAuth = require("../middleware/auth");
@@ -10,11 +6,9 @@ const ai = require("../controllers/aiController");
 
 const router = express.Router();
 
-router.post("/picker", requireAuth, route(ai.picker)); //   "Let AI Choose"
-router.post("/search", requireAuth, route(ai.search)); //   "AI Search"
-router.post("/enhance/:id", requireAuth, route(ai.enhance)); // "Enhance Collection"
-
-// Daily AI quota status ({ used, remaining, limit }) for the header menu badge.
+router.post("/picker", requireAuth, route(ai.picker));
+router.post("/search", requireAuth, route(ai.search));
+router.post("/enhance/:id", requireAuth, route(ai.enhance));
 router.get("/usage", requireAuth, route(ai.getUsage));
 
 module.exports = router;

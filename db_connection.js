@@ -1,11 +1,5 @@
-// db_connection.js — MongoDB connection via Mongoose.
-// Reads the connection string from process.env.MONGODB_URI and opens a single
-// shared connection for the whole app.
-
 const mongoose = require("mongoose");
 
-// Connect to MongoDB. Resolves with the active connection, rejects if the
-// MONGODB_URI is missing or the connection can't be established.
 async function connectDB() {
   const uri = process.env.MONGODB_URI;
   if (!uri) {
