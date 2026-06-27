@@ -38,10 +38,12 @@ const RATING_SORT_VOTE_FLOOR = 50;
 
 // Free-text search via TMDB /search/movie. Returned RAW — we deliberately do NOT
 // apply any sort or filter when there's a text query. /search/movie already ranks
-// by text-match relevance (typo tolerant, the canonical original above its
-// sequels/spin-offs), and re-sorting or filtering that page would only bury the
-// title the user actually searched for. Sort and filters apply to the discover feed
-// (empty q) only. `page` is forwarded 1:1 to TMDB so pages stay full as you scroll.
+// by text-match relevance (the canonical original above its sequels/spin-offs), and
+// re-sorting or filtering that page would only bury the title the user actually
+// searched for. (It normalizes case/accents but is NOT fuzzy — a real misspelling
+// returns whatever TMDB returns, i.e. usually nothing; we don't second-guess it.)
+// Sort and filters apply to the discover feed (empty q) only. `page` is forwarded
+// 1:1 to TMDB so pages stay full as you scroll.
 const searchByText = async (q, page) => {
   const data = await tmdb("/search/movie", { query: q, include_adult: "false", page });
   return data.results || [];
@@ -54,7 +56,7 @@ const searchByText = async (q, page) => {
 // GET /api/movies/search — movie feed with continuous pagination. Two modes:
 //   • Free-text (q present): TMDB /search/movie, returned by relevance. Sort and
 //     ALL filters are intentionally IGNORED — search is pure text relevance, so the
-//     canonical original ranks above its sequels and typos are tolerated.
+//     canonical original ranks above its sequels. (TMDB's text match is not fuzzy.)
 //   • Discover (q empty): /discover/movie with the chosen sort + every filter as
 //     native params. The `sortBy` value is a SEMANTIC intent the server maps to a
 //     TMDB sort_by (see SORT_BY) — e.g. `popularity` = all-time most-rated
