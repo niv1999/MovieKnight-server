@@ -13,7 +13,7 @@ const { aiUsageFor } = require("../services/aiQuota");
 const BCRYPT_ROUNDS = 10;
 const TOKEN_TTL = "7d";
 
-// Every new user starts with these three collections (DATA_MODEL: isDefault: true).
+// Every new user starts with these three collections (stored with isDefault: true).
 const DEFAULT_COLLECTIONS = ["Favorites", "Already Watched", "Watchlist"];
 
 // Shape a User doc for the client — explicit allow-list so passwordHash (or any

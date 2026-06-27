@@ -9,7 +9,7 @@
 // a PRIVATE collection is visible only to its owner (others get 404, never 403, so
 // a private collection's existence isn't leaked — see getOne).
 //
-// Likes/Saves are deferred (Explore — SPRINT_PLAN §11.8). We expose a stable
+// Likes/Saves are deferred (part of the Explore feature). We expose a stable
 // `likesCount`/`savesCount` of 0 so the client contract is fixed now, but there is
 // no like/save storage or toggling yet.
 
@@ -21,7 +21,7 @@ const { dbReady } = require("../services/movieCache");
 
 const MAX_NAME = 60; // collection title cap
 
-// The 3 seeded lists can't be renamed or deleted (DATA_MODEL / FR-4.6.7).
+// The 3 seeded lists (Favorites / Already Watched / Watchlist) can't be renamed or deleted.
 function assertEditableName(collection) {
   if (collection.isDefault) {
     const err = new Error("Default collections can't be renamed or deleted");
@@ -148,7 +148,7 @@ async function coversFor(movieIds) {
 
 // Hydrate a movie being added to a collection: fetch its full TMDB details +
 // US watch providers in one call, warm the shared `movies` cache (so the
-// cover/grid has a poster — "cache on add", SPRINT_PLAN S5), and return the
+// cover/grid has a poster — "cache on add"), and return the
 // filter facets (genre_ids, provider_ids) to embed on the collection item.
 //
 // Unlike a cache-only warm, this ALWAYS hits TMDB on add: list/search endpoints

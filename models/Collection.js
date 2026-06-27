@@ -21,7 +21,7 @@ const collectionItemSchema = new mongoose.Schema(
 
 // Embedded saved "Spin the Wheel" state. The client persists the wheel as a
 // plain array of strings (movie titles / free-form entries), so the model stores
-// [String] to match that format byte-for-byte (DATA_MODEL leaves wheel items open).
+// [String] to match that format byte-for-byte (the data model leaves wheel items open).
 
 // The collection-page "Sort by" choices (must match client SORTS keys in
 // client/js/pages/collection/shared.js). Stored per-collection so a user's chosen
