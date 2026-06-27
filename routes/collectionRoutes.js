@@ -1,8 +1,9 @@
 // routes/collectionRoutes.js — Collections resource. Mounted at /api in index.js,
 // so paths here are relative to that prefix (final paths are /api/collections/*).
-// Owner-only routes go through requireAuth; GET /:id uses optionalAuth so a guest
-// (or another user) can view a PUBLIC collection in visitor mode while a private
-// one stays 404 to everyone but its owner (enforced in the controller).
+// Every route is requireAuth-gated (Explore is login-only): guests get 401 and the
+// client redirects them to login. A logged-in non-owner can view a PUBLIC collection
+// in visitor mode; a private one stays 404 to everyone but its owner (enforced in
+// the controller).
 const express = require("express");
 const route = require("../utils/route");
 const requireAuth = require("../middleware/auth");

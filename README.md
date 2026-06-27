@@ -64,7 +64,7 @@ services/
   movieCache.js       Mongo "fetch once, store forever" movie cache
   gemini.js           Gemini client (JSON-mode prompts)
   aiQuota.js          per-user daily AI quota
-middleware/auth.js    JWT verification (requireAuth / optionalAuth)
+middleware/auth.js    JWT verification (requireAuth)
 models/               Mongoose schemas: User, Movie, Collection, FeedCache
 utils/route.js        wraps async handlers so errors funnel to the central handler
 ```

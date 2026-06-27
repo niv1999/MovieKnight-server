@@ -302,7 +302,7 @@ async function create(req, res) {
 async function getOne(req, res) {
   const collection = await findOr404(req.params.id);
 
-  const isOwner = !!req.user && collection.userId.equals(req.user._id);
+  const isOwner = collection.userId.equals(req.user._id);
   if (!collection.isPublic && !isOwner) {
     // private + not the owner → 404, never 403 (don't leak existence)
     const err = new Error("Collection not found");
@@ -322,7 +322,7 @@ async function getOne(req, res) {
   // Owner's username for the "By <author>" line. Look it up separately rather than
   // .populate()-ing the collection doc (populate mutates collection.userId into the
   // User object, which would then break the authorId stringify in toFull).
-  let author = isOwner && req.user ? req.user.username : null;
+  let author = isOwner ? req.user.username : null;
   if (!author) {
     const owner = await User.findById(collection.userId)
       .select("username")
@@ -490,7 +490,7 @@ function cleanWheel(raw) {
 async function getWheel(req, res) {
   const collection = await findOr404(req.params.id);
 
-  const isOwner = !!req.user && collection.userId.equals(req.user._id);
+  const isOwner = collection.userId.equals(req.user._id);
   if (!collection.isPublic && !isOwner) {
     const err = new Error("Collection not found"); // don't leak a private collection
     err.status = 404;
@@ -538,7 +538,7 @@ async function saveWheel(req, res) {
 async function wheelFilters(req, res) {
   const collection = await findOr404(req.params.id);
 
-  const isOwner = !!req.user && collection.userId.equals(req.user._id);
+  const isOwner = collection.userId.equals(req.user._id);
   if (!collection.isPublic && !isOwner) {
     const err = new Error("Collection not found"); // don't leak a private collection
     err.status = 404;

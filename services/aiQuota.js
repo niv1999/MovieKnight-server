@@ -73,10 +73,7 @@ async function consumeAiAction(user) {
 }
 
 module.exports = {
-  DAILY_AI_LIMIT,
-  AI_LIMIT_CODE,
   aiLimitError,
-  pacificDay,
   aiUsageFor,
   consumeAiAction,
 };

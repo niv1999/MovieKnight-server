@@ -54,4 +54,4 @@ function randInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-module.exports = { tmdb, clampPage, randInt, TMDB_BASE };
+module.exports = { tmdb, clampPage, randInt };

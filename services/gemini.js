@@ -128,4 +128,4 @@ async function generateJsonArray(prompt, { temperature = 0.4, schema = null } = 
   return parseJsonArray(result.response.text());
 }
 
-module.exports = { generateJsonArray, MODEL };
+module.exports = { generateJsonArray };

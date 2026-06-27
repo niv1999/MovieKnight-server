@@ -359,10 +359,7 @@ async function getStats() {
 
 module.exports = {
   dbReady,
-  feedKey,
   getFeed,
-  getCachedDetail,
-  saveDetail,
   retrieveMovie,
   getStats,
 };
